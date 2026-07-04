@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components"
 
 Item {
     id: root
@@ -98,40 +99,18 @@ Item {
                     }
                 }
 
-                TextField {
+                PasswordField {
                     id: passwordInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     placeholderText: "设置密码"
-                    echoMode: TextInput.Password
-                    font.pixelSize: 15
-                    verticalAlignment: TextInput.AlignVCenter
-                    leftPadding: 16
-                    topPadding: 0
-                    bottomPadding: 0
-                    background: Rectangle {
-                        radius: 16
-                        color: "#f8fafc"
-                        border.color: passwordInput.activeFocus ? "#2563eb" : "#dbe3ef"
-                    }
                 }
 
-                TextField {
+                PasswordField {
                     id: confirmPasswordInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     placeholderText: "确认密码"
-                    echoMode: TextInput.Password
-                    font.pixelSize: 15
-                    verticalAlignment: TextInput.AlignVCenter
-                    leftPadding: 16
-                    topPadding: 0
-                    bottomPadding: 0
-                    background: Rectangle {
-                        radius: 16
-                        color: "#f8fafc"
-                        border.color: confirmPasswordInput.activeFocus ? "#2563eb" : "#dbe3ef"
-                    }
                 }
 
                 Button {
