@@ -7,6 +7,7 @@ Item {
     property alias text: input.text
     property string placeholderText: ""
     property bool passwordVisible: true
+    property bool hasError: false
 
     property url eyeSource: "qrc:/asserts/eye.svg"
     property url crossedEyeSource: "qrc:/asserts/crossed-eye.svg"
@@ -19,7 +20,7 @@ Item {
         anchors.fill: parent
         radius: 16
         color: "#f8fafc"
-        border.color: input.activeFocus ? "#2563eb" : "#dbe3ef"
+        border.color: root.hasError ? "#ef4444" : input.activeFocus ? "#2563eb" : "#dbe3ef"
         border.width: 1
     }
 

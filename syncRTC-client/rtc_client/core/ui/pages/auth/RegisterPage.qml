@@ -10,6 +10,34 @@ Item {
     signal registerFinished()
     signal loginRequested()
 
+    property string usernameError: ""
+    property string emailError: ""
+    property string passwordError: ""
+    property string confirmPasswordError: ""
+
+    function isValidEmail(value) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+    }
+
+    function isValidPassword(value) {
+        return value.length >= 6 && /[A-Za-z]/.test(value) && /\d/.test(value)
+    }
+
+    function validateForm() {
+        var username = usernameInput.text.trim()
+        var email = emailInput.text.trim()
+
+        usernameError = username.length === 0 ? "请输入用户名" : username.length < 2 ? "用户名至少 2 位" : ""
+        emailError = email.length === 0 ? "请输入邮箱" : !isValidEmail(email) ? "请输入正确的邮箱地址" : ""
+        passwordError = passwordInput.text.length === 0 ? "请输入密码" : !isValidPassword(passwordInput.text) ? "密码至少 6 位，且包含英文和数字" : ""
+        confirmPasswordError = confirmPasswordInput.text.length === 0 ? "请再次输入密码" : confirmPasswordInput.text !== passwordInput.text ? "两次输入的密码不一致" : ""
+
+        return usernameError.length === 0
+            && emailError.length === 0
+            && passwordError.length === 0
+            && confirmPasswordError.length === 0
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#f5f8ff"
@@ -17,7 +45,7 @@ Item {
         Rectangle {
             anchors.centerIn: parent
             width: 500
-            height: 620
+            height: 690
             radius: 28
             color: "#ffffff"
             border.color: "#e2e8f0"
@@ -26,7 +54,7 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 42
-                spacing: 16
+                spacing: 10
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -75,11 +103,16 @@ Item {
                     leftPadding: 16
                     topPadding: 0
                     bottomPadding: 0
+                    onTextChanged: usernameError = ""
                     background: Rectangle {
                         radius: 16
                         color: "#f8fafc"
-                        border.color: usernameInput.activeFocus ? "#2563eb" : "#dbe3ef"
+                        border.color: usernameError.length > 0 ? "#ef4444" : usernameInput.activeFocus ? "#2563eb" : "#dbe3ef"
                     }
+                }
+
+                FieldErrorText {
+                    message: usernameError
                 }
 
                 TextField {
@@ -92,11 +125,16 @@ Item {
                     leftPadding: 16
                     topPadding: 0
                     bottomPadding: 0
+                    onTextChanged: emailError = ""
                     background: Rectangle {
                         radius: 16
                         color: "#f8fafc"
-                        border.color: emailInput.activeFocus ? "#2563eb" : "#dbe3ef"
+                        border.color: emailError.length > 0 ? "#ef4444" : emailInput.activeFocus ? "#2563eb" : "#dbe3ef"
                     }
+                }
+
+                FieldErrorText {
+                    message: emailError
                 }
 
                 PasswordField {
@@ -104,6 +142,17 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     placeholderText: "设置密码"
+                    hasError: passwordError.length > 0
+                    onTextChanged: {
+                        passwordError = ""
+                        if (confirmPasswordError.length > 0) {
+                            confirmPasswordError = ""
+                        }
+                    }
+                }
+
+                FieldErrorText {
+                    message: passwordError
                 }
 
                 PasswordField {
@@ -111,6 +160,12 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     placeholderText: "确认密码"
+                    hasError: confirmPasswordError.length > 0
+                    onTextChanged: confirmPasswordError = ""
+                }
+
+                FieldErrorText {
+                    message: confirmPasswordError
                 }
 
                 Button {
@@ -131,7 +186,11 @@ Item {
                         radius: 18
                         color: parent.down ? "#1d4ed8" : parent.hovered ? "#1e40af" : "#2563eb"
                     }
-                    onClicked: root.registerFinished()
+                    onClicked: {
+                        if (validateForm()) {
+                            root.registerFinished()
+                        }
+                    }
                 }
 
                 Row {

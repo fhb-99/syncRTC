@@ -29,6 +29,7 @@ qt_add_qml_module(apprtc_client
         core/ui/pages/auth/RegisterPage.qml
         core/ui/pages/auth/ForgotPasswordPage.qml
         core/ui/pages/auth/components/PasswordField.qml
+        core/ui/pages/auth/components/FieldErrorText.qml
     SOURCES
         core/src/network/httpmgr.h
         core/src/network/httpmgr.cpp

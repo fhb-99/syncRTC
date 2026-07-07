@@ -10,6 +10,15 @@ Item {
     signal registerRequested()
     signal forgotPasswordRequested()
 
+    property string accountError: ""
+    property string passwordError: ""
+
+    function validateForm() {
+        accountError = accountInput.text.trim().length === 0 ? "请输入邮箱或用户名" : ""
+        passwordError = passwordInput.text.length === 0 ? "请输入密码" : ""
+        return accountError.length === 0 && passwordError.length === 0
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#f5f8ff"
@@ -74,7 +83,7 @@ Item {
         Rectangle {
             id: card
             width: 430
-            height: 520
+            height: 560
             radius: 28
             color: "#ffffff"
             border.color: "#e2e8f0"
@@ -86,7 +95,7 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 42
-                spacing: 18
+                spacing: 12
 
                 Text {
                     text: "欢迎回来"
@@ -113,11 +122,16 @@ Item {
                     rightPadding: 16
                     topPadding: 0
                     bottomPadding: 0
+                    onTextChanged: accountError = ""
                     background: Rectangle {
                         radius: 16
                         color: "#f8fafc"
-                        border.color: accountInput.activeFocus ? "#2563eb" : "#dbe3ef"
+                        border.color: accountError.length > 0 ? "#ef4444" : accountInput.activeFocus ? "#2563eb" : "#dbe3ef"
                     }
+                }
+
+                FieldErrorText {
+                    message: accountError
                 }
 
                 PasswordField {
@@ -125,6 +139,12 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     placeholderText: "密码"
+                    hasError: passwordError.length > 0
+                    onTextChanged: passwordError = ""
+                }
+
+                FieldErrorText {
+                    message: passwordError
                 }
 
                 RowLayout {
@@ -173,7 +193,11 @@ Item {
                         radius: 18
                         color: parent.down ? "#1d4ed8" : parent.hovered ? "#1e40af" : "#2563eb"
                     }
-                    onClicked: root.loginRequested(accountInput.text, passwordInput.text)
+                    onClicked: {
+                        if (validateForm()) {
+                            root.loginRequested(accountInput.text.trim(), passwordInput.text)
+                        }
+                    }
                 }
 
                 Row {
