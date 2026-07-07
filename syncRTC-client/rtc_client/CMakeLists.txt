@@ -25,10 +25,22 @@ qt_add_qml_module(apprtc_client
     NO_GENERATE_QMLTYPES
     QML_FILES
         core/ui/Main.qml
-        core/ui/components/PasswordField.qml
-        core/ui/pages/LoginPage.qml
-        core/ui/pages/RegisterPage.qml
-        core/ui/pages/ForgotPasswordPage.qml
+        core/ui/pages/auth/LoginPage.qml
+        core/ui/pages/auth/RegisterPage.qml
+        core/ui/pages/auth/ForgotPasswordPage.qml
+        core/ui/pages/auth/components/PasswordField.qml
+    SOURCES
+        core/src/network/httpmgr.h
+        core/src/network/httpmgr.cpp
+        core/src/models/Singleton.h
+        core/src/controllers/auth/AuthController.h
+        core/src/controllers/auth/AuthController.cpp
+        core/src/controllers/auth/LoginController.h
+        core/src/controllers/auth/LoginController.cpp
+        core/src/controllers/auth/RegisterController.h
+        core/src/controllers/auth/RegisterController.cpp
+        core/src/controllers/auth/PasswordResetController.h
+        core/src/controllers/auth/PasswordResetController.cpp
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.

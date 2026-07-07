@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Controls
-import "pages"
+import "pages/auth"
 
 Window {
     id: root
