@@ -29,6 +29,8 @@ meta_types/
 .generated/
 
 # Binaries and libraries
+bin/
+**/bin/
 *.exe
 *.dll
 *.dll.a
@@ -38,6 +40,11 @@ meta_types/
 *.a
 *.so
 *.dylib
+
+# Local runtime secrets
+.env
+.env.*
+!.env.example
 
 # OS/editor noise
 .DS_Store
