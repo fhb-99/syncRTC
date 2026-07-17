@@ -82,11 +82,11 @@ public:
 
 private:
     std::size_t m_poolSize;
-    std::atomic<bool> m_stop;
     std::mutex m_mutex;
     std::condition_variable m_cond;
     std::string m_host;
     std::string m_port;
+    std::atomic<bool> m_stop;
     std::queue<std::unique_ptr<VarifyService::Stub>> m_pools;
 };
 
