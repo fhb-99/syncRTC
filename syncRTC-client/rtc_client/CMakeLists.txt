@@ -30,6 +30,16 @@ qt_add_qml_module(apprtc_client
         core/ui/pages/auth/ForgotPasswordPage.qml
         core/ui/pages/auth/components/PasswordField.qml
         core/ui/pages/auth/components/FieldErrorText.qml
+        core/ui/pages/auth/components/EmailCodeInput.qml
+        core/ui/pages/auth/components/PrimaryButton.qml
+        core/ui/pages/meeting/MeetingShell.qml
+        core/ui/pages/meeting/MeetingHomePage.qml
+        core/ui/pages/meeting/MeetingHistoryPage.qml
+        core/ui/pages/meeting/ContactsPage.qml
+        core/ui/pages/meeting/AiAssistantPage.qml
+        core/ui/pages/meeting/SettingsPage.qml
+        core/ui/pages/meeting/ModulePlaceholderPage.qml
+        core/ui/pages/meeting/UserProfileDialog.qml
     SOURCES
         core/src/network/httpmgr.h
         core/src/network/httpmgr.cpp
@@ -42,6 +52,17 @@ qt_add_qml_module(apprtc_client
         core/src/controllers/auth/RegisterController.cpp
         core/src/controllers/auth/PasswordResetController.h
         core/src/controllers/auth/PasswordResetController.cpp
+        SOURCES core/src/models/global.h
+        RESOURCES config/config.ini
+        SOURCES core/src/models/Data.h
+        SOURCES core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
+)
+
+add_custom_command(TARGET apprtc_client POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/config"
+        "$<TARGET_FILE_DIR:apprtc_client>/config"
+    COMMENT "Copying runtime config files to output directory"
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.

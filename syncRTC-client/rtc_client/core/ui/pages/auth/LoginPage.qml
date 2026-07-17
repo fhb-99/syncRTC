@@ -7,16 +7,50 @@ Item {
     id: root
 
     signal loginRequested(string account, string password)
+    signal loginSucceeded(string username, string email)
     signal registerRequested()
     signal forgotPasswordRequested()
 
     property string accountError: ""
     property string passwordError: ""
+    property string noticeMessage: ""
+    property bool noticeIsError: false
+    property bool loginPending: false
+
+    function showNotice(message, isError) {
+        noticeMessage = message
+        noticeIsError = isError
+    }
 
     function validateForm() {
         accountError = accountInput.text.trim().length === 0 ? "请输入邮箱或用户名" : ""
         passwordError = passwordInput.text.length === 0 ? "请输入密码" : ""
         return accountError.length === 0 && passwordError.length === 0
+    }
+
+    function submitLogin() {
+        if (!validateForm()) {
+            return
+        }
+
+        noticeMessage = ""
+        loginPending = true
+        root.loginRequested(accountInput.text.trim(), passwordInput.text)
+    }
+
+    Connections {
+        target: authController.loginController
+
+        function onLoginSucceeded(username, email) {
+            root.loginPending = false
+            root.showNotice("登录成功，正在进入会议...", false)
+            root.loginSucceeded(username, email)
+        }
+
+        function onLoginFailed(reason) {
+            root.loginPending = false
+            root.showNotice(reason, true)
+        }
     }
 
     Rectangle {
@@ -111,40 +145,74 @@ Item {
                     Layout.bottomMargin: 8
                 }
 
+                Rectangle {
+                    visible: root.noticeMessage.length > 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: noticeText.implicitHeight + 18
+                    radius: 12
+                    color: root.noticeIsError ? "#fef2f2" : "#eff6ff"
+                    border.color: root.noticeIsError ? "#fecaca" : "#bfdbfe"
+
+                    Text {
+                        id: noticeText
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        color: root.noticeIsError ? "#b91c1c" : "#1d4ed8"
+                        font.pixelSize: 13
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        text: root.noticeMessage
+                    }
+                }
+
                 TextField {
                     id: accountInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    placeholderText: "邮箱 / 用户名"
+                    enabled: !root.loginPending
+                    placeholderText: "邮箱"
                     font.pixelSize: 15
                     verticalAlignment: TextInput.AlignVCenter
                     leftPadding: 16
                     rightPadding: 16
                     topPadding: 0
                     bottomPadding: 0
-                    onTextChanged: accountError = ""
+                    onTextChanged: {
+                        root.accountError = ""
+                        if (root.noticeIsError) {
+                            root.noticeMessage = ""
+                        }
+                    }
                     background: Rectangle {
                         radius: 16
                         color: "#f8fafc"
-                        border.color: accountError.length > 0 ? "#ef4444" : accountInput.activeFocus ? "#2563eb" : "#dbe3ef"
+                        border.color: root.accountError.length > 0 ? "#ef4444" : accountInput.activeFocus ? "#2563eb" : "#dbe3ef"
                     }
                 }
 
                 FieldErrorText {
-                    message: accountError
+                    message: root.accountError
                 }
 
                 PasswordField {
                     id: passwordInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
+                    enabled: !root.loginPending
                     placeholderText: "密码"
-                    hasError: passwordError.length > 0
-                    onTextChanged: passwordError = ""
+                    hasError: root.passwordError.length > 0
+                    onTextChanged: {
+                        root.passwordError = ""
+                        if (root.noticeIsError) {
+                            root.noticeMessage = ""
+                        }
+                    }
+                    onAccepted: root.submitLogin()
                 }
 
                 FieldErrorText {
-                    message: passwordError
+                    message: root.passwordError
                 }
 
                 RowLayout {
@@ -153,6 +221,7 @@ Item {
 
                     CheckBox {
                         id: rememberCheck
+                        enabled: !root.loginPending
                         text: "记住登录状态"
                         checked: true
                         font.pixelSize: 13
@@ -163,6 +232,7 @@ Item {
                     }
 
                     Text {
+                        opacity: root.loginPending ? 0.45 : 1.0
                         text: "忘记密码？"
                         color: "#2563eb"
                         font.pixelSize: 13
@@ -170,34 +240,19 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
+                            enabled: !root.loginPending
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.forgotPasswordRequested()
                         }
                     }
                 }
 
-                Button {
+                PrimaryButton {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    text: "登录"
-                    font.pixelSize: 17
-                    font.bold: true
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#ffffff"
-                        font: parent.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        radius: 18
-                        color: parent.down ? "#1d4ed8" : parent.hovered ? "#1e40af" : "#2563eb"
-                    }
-                    onClicked: {
-                        if (validateForm()) {
-                            root.loginRequested(accountInput.text.trim(), passwordInput.text)
-                        }
-                    }
+                    enabled: !root.loginPending
+                    text: root.loginPending ? "登录中..." : "登录"
+                    onClicked: root.submitLogin()
                 }
 
                 Row {
@@ -212,6 +267,7 @@ Item {
                     }
 
                     Text {
+                        opacity: root.loginPending ? 0.45 : 1.0
                         text: "立即注册"
                         color: "#2563eb"
                         font.pixelSize: 14
@@ -219,6 +275,7 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
+                            enabled: !root.loginPending
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.registerRequested()
                         }

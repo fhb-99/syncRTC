@@ -8,12 +8,21 @@ Item {
 
     signal backRequested()
     signal resetFinished()
+    signal verificationCodeRequested(string email)
+    signal resetPasswordRequested(string email, string code, string password)
     signal loginRequested()
 
     property string emailError: ""
     property string codeError: ""
     property string passwordError: ""
     property string confirmPasswordError: ""
+    property string noticeMessage: ""
+    property bool noticeIsError: false
+
+    function showNotice(message, isError) {
+        noticeMessage = message
+        noticeIsError = isError
+    }
 
     function isValidEmail(value) {
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
@@ -25,6 +34,12 @@ Item {
 
     function isValidCode(value) {
         return /^[A-Za-z0-9]{4,6}$/.test(value)
+    }
+
+    function validateEmailForCode() {
+        var email = accountInput.text.trim()
+        emailError = email.length === 0 ? "请输入邮箱" : !isValidEmail(email) ? "请输入正确的邮箱地址" : ""
+        return emailError.length === 0
     }
 
     function validateForm() {
@@ -40,6 +55,26 @@ Item {
             && codeError.length === 0
             && passwordError.length === 0
             && confirmPasswordError.length === 0
+    }
+
+    Connections {
+        target: authController.passwordResetController
+
+        function onVerifyCodeSent(email) {
+            root.showNotice("验证码已发送到邮箱：" + email, false)
+        }
+
+        function onVerifyCodeFailed(reason) {
+            root.showNotice(reason, true)
+        }
+
+        function onResetPasswordSucceeded() {
+            root.showNotice("密码重置成功", false)
+        }
+
+        function onResetPasswordFailed(reason) {
+            root.showNotice(reason, true)
+        }
     }
 
     Rectangle {
@@ -97,6 +132,27 @@ Item {
                     Layout.bottomMargin: 10
                 }
 
+                Rectangle {
+                    visible: noticeMessage.length > 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: noticeText.implicitHeight + 18
+                    radius: 12
+                    color: noticeIsError ? "#fef2f2" : "#eff6ff"
+                    border.color: noticeIsError ? "#fecaca" : "#bfdbfe"
+
+                    Text {
+                        id: noticeText
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        color: noticeIsError ? "#b91c1c" : "#1d4ed8"
+                        font.pixelSize: 13
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        text: noticeMessage
+                    }
+                }
+
                 TextField {
                     id: accountInput
                     Layout.fillWidth: true
@@ -119,51 +175,16 @@ Item {
                     message: emailError
                 }
 
-                RowLayout {
+                EmailCodeInput {
+                    id: codeInput
                     Layout.fillWidth: true
-                    spacing: 12
-
-                    TextField {
-                        id: codeInput
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 52
-                        placeholderText: "验证码"
-                        font.pixelSize: 15
-                        verticalAlignment: TextInput.AlignVCenter
-                        leftPadding: 16
-                        topPadding: 0
-                        bottomPadding: 0
-                        onTextChanged: codeError = ""
-                        background: Rectangle {
-                            radius: 16
-                            color: "#f8fafc"
-                            border.color: codeError.length > 0 ? "#ef4444" : codeInput.activeFocus ? "#2563eb" : "#dbe3ef"
+                    errorText: codeError
+                    onTextChanged: codeError = ""
+                    onRequestCode: {
+                        if (validateEmailForCode()) {
+                            root.verificationCodeRequested(accountInput.text.trim())
                         }
                     }
-
-                    Button {
-                        Layout.preferredWidth: 128
-                        Layout.preferredHeight: 52
-                        text: "获取验证码"
-                        font.pixelSize: 14
-                        font.bold: true
-                        contentItem: Text {
-                            text: parent.text
-                            color: "#2563eb"
-                            font: parent.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 16
-                            color: parent.hovered ? "#dbeafe" : "#eff6ff"
-                            border.color: "#bfdbfe"
-                        }
-                    }
-                }
-
-                FieldErrorText {
-                    message: codeError
                 }
 
                 PasswordField {
@@ -197,27 +218,14 @@ Item {
                     message: confirmPasswordError
                 }
 
-                Button {
+                PrimaryButton {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     Layout.topMargin: 10
                     text: "重置密码"
-                    font.pixelSize: 17
-                    font.bold: true
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#ffffff"
-                        font: parent.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        radius: 18
-                        color: parent.down ? "#1d4ed8" : parent.hovered ? "#1e40af" : "#2563eb"
-                    }
                     onClicked: {
                         if (validateForm()) {
-                            root.resetFinished()
+                            root.resetPasswordRequested(accountInput.text.trim(), codeInput.text.trim(), passwordInput.text.trim(), confirmPasswordInput.text.trim())
                         }
                     }
                 }
