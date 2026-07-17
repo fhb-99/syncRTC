@@ -1,0 +1,396 @@
+#include "service/LogicSystem.h"
+#include "rpc/VarifyGrpcClient.h"
+#include "common/data.h"
+#include "storage/RedisMgr.h"
+#include "storage/MySqlMgr.h"
+#include "config/ConfigMgr.h"
+
+#include <iostream>
+#include <boost/beast/http.hpp>
+#include <boost/beast.hpp>
+#include <json/json.h>
+#include <json/value.h>
+#include <json/reader.h>
+#include <crypt.h>
+#include <cstdlib>
+#include <array>
+#include <iomanip>
+#include <openssl/rand.h>
+#include <sstream>
+
+
+
+// 加盐哈希算法
+std::string HashPassword(const std::string password)
+{
+    return LogicSystem::HashPassword(password);
+}
+
+bool VarifyPassword(const std::string& password, const std::string& stored_hash)
+{
+    return LogicSystem::VerifyPassword(password, stored_hash);
+}
+
+namespace {
+
+constexpr unsigned long kBcryptCost = 12;
+constexpr int kTokenExpireSeconds = 7 * 24 * 60 * 60;
+
+} // namespace
+
+std::string LogicSystem::HashPassword(const std::string& password)
+{
+    char* setting = crypt_gensalt_ra("$2b$", kBcryptCost, nullptr, 0);
+    if (!setting) {
+        return {};
+    }
+
+    void* data = nullptr;
+    int data_size = 0;
+    char* hash = crypt_ra(password.c_str(), setting, &data, &data_size);
+    std::string result = hash ? hash : "";
+
+    std::free(setting);
+    std::free(data);
+    return result;
+}
+
+bool LogicSystem::VerifyPassword(const std::string& password,
+                                 const std::string& stored_hash)
+{
+    if (stored_hash.empty()) {
+        return false;
+    }
+
+    void* data = nullptr;
+    int data_size = 0;
+    char* hash = crypt_ra(password.c_str(), stored_hash.c_str(),
+                          &data, &data_size);
+    const bool matches = hash && stored_hash == hash;
+
+    std::free(data);
+    return matches;
+}
+
+
+std::string LogicSystem::GenerateToken()
+{
+    std::array<unsigned char, 32> bytes{};
+    if (RAND_bytes(bytes.data(), bytes.size()) != 1) {
+        return {};
+    }
+
+    std::ostringstream token;
+    token << std::hex << std::setfill('0');
+    for (unsigned char byte : bytes) {
+        token << std::setw(2) << static_cast<int>(byte);
+    }
+    return token.str();
+}
+
+
+bool LogicSystem::HandleGet(std::string path, std::shared_ptr<HttpConnection> con)
+{
+    if (_get_handlers.find(path) == _get_handlers.end())
+    {
+        return false;
+    }
+
+    _get_handlers[path](con);
+    return true;
+}
+
+void LogicSystem::RegisterGet(std::string url, HttpHandler handler)
+{
+    _get_handlers.insert(make_pair(url, handler));
+}
+
+bool LogicSystem::HandlePost(std::string url, std::shared_ptr<HttpConnection> con)
+{
+    if (_post_handlers.find(url) == _post_handlers.end())
+    {
+        return false;
+    }
+
+    _post_handlers[url](con);
+    return true;
+}
+
+void LogicSystem::RegisterPost(std::string url, HttpHandler handler)
+{
+    _post_handlers.insert(make_pair(url, handler));
+}
+
+LogicSystem::LogicSystem()
+{
+    //测试
+    RegisterGet("/get_test", [](std::shared_ptr<HttpConnection> connection) {
+        beast::ostream(connection->_response.body()) << "receive get_test request";
+        int i = 0;
+        for (auto& elem : connection->m_get_params) 
+        {
+            i++;
+            beast::ostream(connection->_response.body()) << "param" << i << " key is " << elem.first;
+            beast::ostream(connection->_response.body()) << ", " <<  " value is " << elem.second << std::endl;
+        } 
+    });
+
+    RegisterPost("/get_varifycode", [](std::shared_ptr<HttpConnection> connection){
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+        std::cout << "receive body is " << body_str << std::endl;
+        connection->_response.set(http::field::content_type, "text/json");
+        Json::Value root;
+        Json::Reader reader;
+        Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+        if (!parse_success) 
+        {
+            std::cout << "Failed to parse JSON data!" << std::endl;
+            root["error"] = ErrorCodes::ERROR_JSON;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        auto email = src_root["email"].asString();
+        GetVarifyResponse response = VarifyGrpcClient::GetInstance()->GetCode(email);
+        std::cout << "email is " << email << std::endl;
+        std::cout << "code is " << response.code();
+        root["error"] = response.error();
+        root["email"] = src_root["email"];
+        root["code"] = response.code();
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+        return true; 
+    }); 
+
+
+    RegisterPost("/register_user", [](std::shared_ptr<HttpConnection> connection){
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+        std::cout << "receive body is " << body_str << std::endl;
+        connection->_response.set(http::field::content_type, "text/json");
+        Json::Value root;
+        Json::Reader reader;
+        Json::Value src_root;
+        bool success = reader.parse(body_str, src_root);
+        if(!success) {
+            std::cout << "Failed to parse JSON data!" << std::endl;
+            root["error"] = ErrorCodes::ERROR_JSON;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        UserData user_data;
+        auto data = src_root["UserData"];
+        user_data.username = data["username"].asString();
+        user_data.email = data["email"].asString();
+        user_data.password = data["password"].asString();
+        std::string code = src_root["VarifyCode"].asString();
+        std::string comfirm = src_root["Comfirm"].asString();
+
+        if(comfirm != user_data.password) {
+            std::cout << "password err " << std::endl;
+            root["error"] = ErrorCodes::ERROR_PASSWORD;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // redis中判断验证码是否一致 
+        std::string varify_code;
+        bool b_get_code = RedisMgr::GetInstance()->Get("code_" + data["email"].asString(), varify_code);
+        std::cout << "varify_code is: " << varify_code << std::endl;
+        if(!b_get_code) {
+            std::cout << "Get Varify Code Expired" << std::endl;
+            root["error"] = ErrorCodes::ERROR_VARIFY_EXPIRED;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if(varify_code != code) {
+            std::cout << " varify code error" << std::endl;
+            root["error"] = ErrorCodes::ERROR_VARIFYCODE;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // 从数据库中查询用户 
+        std::string password_hash = HashPassword(user_data.password);
+        int uid = MysqlMgr::GetInstance()->RegisterUser(user_data.username, user_data.email, password_hash);
+        if(uid == -1) {
+            std::cout << "MySql Error" << std::endl;
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+        if(uid == 0) {
+            std::cout << "User is Exist" << std::endl;
+            root["error"] = ErrorCodes::ERROR_USER_EXIST;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["email"] = user_data.email;
+        root["uid"] = uid;
+        root["username"] = user_data.username;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+
+        return true;
+    });
+
+    RegisterPost("/login_user", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        auto email = src_root["account"].asString();
+        auto password = src_root["password"].asString();
+        
+        // 检查密码是否匹配
+        std::string password_hash = "";
+        bool is_pwd = MysqlMgr::GetInstance()->CheckPwd(email, password_hash);
+        if(!is_pwd || password_hash.empty()) {
+            std::cout << "MYSQL ERROR" << std::endl;
+			root["error"] = ErrorCodes::ERROR_MYSQL;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+        bool is_match = VarifyPassword(password, password_hash);
+        if(!is_match) {
+            std::cout << " user pwd not match" << std::endl;
+			root["error"] = ErrorCodes::ERROR_PASSWORD_INVALID;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+
+        // 给客户端发送服务器的ip和port
+        auto& config = ConfigMgr::Init();
+        std::string host = config["RealtimeServer"]["Host"];
+        std::string port = config["RealtimeServer"]["Port"];
+
+        UserInfo user_info;
+        // 数据库查询id和username
+        bool is_user = MysqlMgr::GetInstance()->GetUserInfo(email, user_info);
+        if(!is_user || user_info.uid <= 0 || user_info.username.empty()) {
+            std::cout << "Get user info failed" << std::endl;
+			root["error"] = ErrorCodes::ERROR_MYSQL;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+
+        // 随机生成token， redis存储token， 设置过期时间 
+        const std::string token = LogicSystem::GenerateToken();
+        if(token.empty() || !RedisMgr::GetInstance()->Set("auth::session:" + token, 
+                                                        std::to_string(user_info.uid),
+                                                        kTokenExpireSeconds)) {
+            std::cout << "Store token failed" << std::endl;
+            root["error"] = ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["email"] = email;
+        root["uid"] = user_info.uid;
+        root["username"] = user_info.username;
+        root["token"] = token;
+        root["host"] = host;
+        root["port"] = port;
+        root["expires_in"] = kTokenExpireSeconds;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+
+        return true;
+    });
+
+
+    RegisterPost("/reset_pwd", [](std::shared_ptr<HttpConnection> connection){
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        std::string email = src_root["email"].asString();
+        std::string code = src_root["VarifyCode"].asString();
+        std::string password = src_root["password"].asString();
+        std::string confirm = src_root["confirm"].asString();
+
+        if(confirm != password) {
+            std::cout << "password err " << std::endl;
+            root["error"] = ErrorCodes::ERROR_PASSWORD;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // redis中判断验证码是否一致 
+        std::string varify_code;
+        bool b_get_code = RedisMgr::GetInstance()->Get("code_" + src_root["email"].asString(), varify_code);
+        if(!b_get_code) {
+            std::cout << "Get Varify Code Expired" << std::endl;
+            root["error"] = ErrorCodes::ERROR_VARIFY_EXPIRED;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if(varify_code != code) {
+            std::cout << " varify code error" << std::endl;
+            root["error"] = ErrorCodes::ERROR_VARIFYCODE;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // 更新密码
+        std::string password_hash = HashPassword(password);
+        bool is_update = MysqlMgr::GetInstance()->UpdatePwd(email, password_hash);
+        if(!is_update) {
+            std::cout << " update pwd failed" << std::endl;
+			root["error"] = ErrorCodes::ERROR_PASSWORD;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["email"] = email;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+
+        return true;
+    });
+}
