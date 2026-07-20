@@ -7,7 +7,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include <netinet/in.h>
 #include <sys/epoll.h>
@@ -137,16 +136,8 @@ void CServer::Run()
 
             const std::shared_ptr<Session>& session = session_it->second;
             bool should_close = false;
-            std::vector<Frame> frames;
-
             if ((event_flags & EPOLLIN) != 0U) {
-                should_close = !session->HandleRead(frames);
-                if (!frames.empty()) {
-                    // 协议帧已经完整解析，命令分发将在后续阶段接入。
-                    std::cout << "客户端 fd=" << event_fd
-                              << " 收到 " << frames.size()
-                              << " 个完整帧，暂不处理业务" << std::endl;
-                }
+                should_close = !session->HandleRead();
             }
             if (!should_close && (event_flags & EPOLLOUT) != 0U) {
                 should_close = !session->HandleWrite();
@@ -219,7 +210,15 @@ void CServer::HandleTimer()
         std::cerr << "读取 timerfd 失败：" << std::strerror(errno) << std::endl;
     }
 
-    // 这里仅消费定时器事件，后续可在此加入心跳和空闲连接检查。
+    // 消费定时器事件，并检查逻辑线程是否向 Session 写入了待发送数据。
+    for (const auto& client : m_client_fds) {
+        std::uint32_t client_events = EPOLLIN | EPOLLRDHUP;
+        if (client.second->HasPendingWrite()) {
+            // 逻辑线程写入发送队列后，在下一次定时器事件中补充可写监听。
+            client_events |= EPOLLOUT;
+        }
+        UpdateEpollEvents(client.first, client_events);
+    }
 }
 
 void CServer::CloseClient(int client_fd)

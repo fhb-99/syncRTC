@@ -1,4 +1,5 @@
 #include "net/Session.h"
+#include "service/LogicSystem.h"
 
 #include <array>
 #include <cerrno>
@@ -24,7 +25,7 @@ int Session::GetFd() const
     return m_fd;
 }
 
-bool Session::HandleRead(std::vector<Frame>& frames)
+bool Session::HandleRead()
 {
     std::array<char, 4096> read_buffer{};
 
@@ -34,7 +35,7 @@ bool Session::HandleRead(std::vector<Frame>& frames)
         if (read_length > 0) {
             m_receive_buffer.append(read_buffer.data(), static_cast<std::size_t>(read_length));
             // 每次追加数据后立即尝试解帧，兼容半包和一次到达多个帧。
-            ParseFrames(frames);
+            ParseFrames();
             continue;
         }
 
@@ -68,12 +69,14 @@ bool Session::Send(std::uint16_t request_id, const std::string& payload)
     message[3] = static_cast<char>(payload_length & 0xFFU);
     message.replace(kFrameHeaderLength, payload.size(), payload);
 
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     m_send_queue.push_back(std::move(message));
     return true;
 }
 
 bool Session::HandleWrite()
 {
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     while (!m_send_queue.empty()) {
         std::string& message = m_send_queue.front();
         // 非阻塞 send 可能只写出一部分，剩余部分由 m_send_offset 记录。
@@ -103,10 +106,11 @@ bool Session::HandleWrite()
 
 bool Session::HasPendingWrite() const
 {
+    std::lock_guard<std::mutex> lock(m_send_mutex);
     return !m_send_queue.empty();
 }
 
-void Session::ParseFrames(std::vector<Frame>& frames)
+void Session::ParseFrames()
 {
     while (m_receive_buffer.size() >= kFrameHeaderLength) {
         // 协议头依次为 request_id(2B) 和 payload_length(2B)，均为大端。
@@ -122,9 +126,13 @@ void Session::ParseFrames(std::vector<Frame>& frames)
             return;
         }
 
-        frames.push_back(Frame{
-            request_id,
-            m_receive_buffer.substr(kFrameHeaderLength, payload_length)});
+        auto message = std::make_shared<LogicNode>();
+        message->session = shared_from_this();
+        message->id = request_id;
+        message->message = m_receive_buffer.substr(kFrameHeaderLength, payload_length);
         m_receive_buffer.erase(0, frame_length);
+
+        // Session 只负责解帧，后续业务处理交给 LogicSystem 的工作线程。
+        LogicSystem::GetInstance()->PostMsgToQue(std::move(message));
     }
 }

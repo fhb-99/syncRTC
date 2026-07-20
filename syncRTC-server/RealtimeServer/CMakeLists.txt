@@ -22,11 +22,13 @@ set(REAL_SERVER_SOURCES
     src/config/ConfigMgr.cpp
     src/net/CServer.cpp
     src/net/Session.cpp
+    src/service/LogicSystem.cpp
 )
 
 add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 
 find_package(Boost REQUIRED COMPONENTS filesystem system)
+find_package(Threads REQUIRED)
 
 # 让运行时配置读取到源码目录下构建后的 bin/conf/config.ini。
 target_compile_definitions(RealtimeServer
@@ -43,6 +45,7 @@ target_link_libraries(RealtimeServer
     PRIVATE
         Boost::filesystem
         Boost::system
+        Threads::Threads
 )
 
 target_compile_options(RealtimeServer
@@ -63,6 +66,7 @@ if(BUILD_TESTING)
     add_executable(session_test
         tests/SessionTest.cpp
         src/net/Session.cpp
+        src/service/LogicSystem.cpp
     )
     target_include_directories(session_test
         PRIVATE
@@ -72,5 +76,22 @@ if(BUILD_TESTING)
         PRIVATE
             $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
+    target_link_libraries(session_test PRIVATE Threads::Threads)
     add_test(NAME session_test COMMAND session_test)
+
+    add_executable(logic_system_test
+        tests/LogicSystemTest.cpp
+        src/net/Session.cpp
+        src/service/LogicSystem.cpp
+    )
+    target_include_directories(logic_system_test
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_compile_options(logic_system_test
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    target_link_libraries(logic_system_test PRIVATE Threads::Threads)
+    add_test(NAME logic_system_test COMMAND logic_system_test)
 endif()

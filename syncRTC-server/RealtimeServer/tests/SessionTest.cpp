@@ -53,30 +53,25 @@ int main()
         return 1;
     }
 
-    Session session(sockets[0]);
-    std::vector<Frame> frames;
+    auto session = std::make_shared<Session>(sockets[0]);
     const std::array<char, 7> frame = {
         static_cast<char>(0x03), static_cast<char>(0xE9),
         static_cast<char>(0x00), static_cast<char>(0x03),
         'a', 'b', 'c'};
 
     if (!SendAll(sockets[1], frame.data(), 2) ||
-        !Expect(session.HandleRead(frames), "读取分片头失败") ||
-        !Expect(frames.empty(), "不完整头不应产生完整帧") ||
+        !Expect(session->HandleRead(), "读取分片头失败") ||
         !SendAll(sockets[1], frame.data() + 2, frame.size() - 2) ||
-        !Expect(session.HandleRead(frames), "读取完整帧失败") ||
-        !Expect(frames.size() == 1, "完整帧数量不正确") ||
-        !Expect(frames.front().request_id == 1001, "request_id 解析错误") ||
-        !Expect(frames.front().payload == "abc", "payload 解析错误")) {
+        !Expect(session->HandleRead(), "读取完整帧失败")) {
         ::close(sockets[0]);
         ::close(sockets[1]);
         return 1;
     }
 
-    if (!Expect(session.Send(1002, "ok"), "加入发送队列失败") ||
-        !Expect(session.HasPendingWrite(), "发送队列状态错误") ||
-        !Expect(session.HandleWrite(), "发送数据失败") ||
-        !Expect(!session.HasPendingWrite(), "发送后队列未清空")) {
+    if (!Expect(session->Send(1002, "ok"), "加入发送队列失败") ||
+        !Expect(session->HasPendingWrite(), "发送队列状态错误") ||
+        !Expect(session->HandleWrite(), "发送数据失败") ||
+        !Expect(!session->HasPendingWrite(), "发送后队列未清空")) {
         ::close(sockets[0]);
         ::close(sockets[1]);
         return 1;
