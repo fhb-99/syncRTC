@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
-#include <unordered_set>
+#include <memory>
+#include <unordered_map>
+
+#include "net/Session.h"
 
 class CServer
 {
@@ -23,10 +26,11 @@ private:
     void HandleTimer();
     void CloseClient(int client_fd);
     void AddToEpoll(int fd, std::uint32_t events);
+    void UpdateEpollEvents(int fd, std::uint32_t events);
 
     unsigned short m_port;
     int m_listen_fd;
     int m_epoll_fd;
     int m_timer_fd;
-    std::unordered_set<int> m_client_fds;
+    std::unordered_map<int, std::shared_ptr<Session>> m_client_fds;
 };

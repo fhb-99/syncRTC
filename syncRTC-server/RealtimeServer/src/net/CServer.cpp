@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <netinet/in.h>
 #include <sys/epoll.h>
@@ -35,8 +36,8 @@ CServer::CServer(unsigned short port)
 
 CServer::~CServer()
 {
-    for (const int client_fd : m_client_fds) {
-        ::close(client_fd);
+    for (const auto& client : m_client_fds) {
+        ::close(client.first);
     }
 
     if (m_timer_fd != -1) {
@@ -123,15 +124,48 @@ void CServer::Run()
                 AcceptClients();
                 continue;
             }
-
             if (event_fd == m_timer_fd) {
                 HandleTimer();
                 continue;
             }
 
-            if ((event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0U) {
-                CloseClient(event_fd);
+            // 监听 fd 和 timerfd 之外的事件都属于已经建立的客户端 Session。
+            const auto session_it = m_client_fds.find(event_fd);
+            if (session_it == m_client_fds.end()) {
+                continue;
             }
+
+            const std::shared_ptr<Session>& session = session_it->second;
+            bool should_close = false;
+            std::vector<Frame> frames;
+
+            if ((event_flags & EPOLLIN) != 0U) {
+                should_close = !session->HandleRead(frames);
+                if (!frames.empty()) {
+                    // 协议帧已经完整解析，命令分发将在后续阶段接入。
+                    std::cout << "客户端 fd=" << event_fd
+                              << " 收到 " << frames.size()
+                              << " 个完整帧，暂不处理业务" << std::endl;
+                }
+            }
+            if (!should_close && (event_flags & EPOLLOUT) != 0U) {
+                should_close = !session->HandleWrite();
+            }
+            if ((event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0U) {
+                should_close = true;
+            }
+
+            if (should_close) {
+                CloseClient(event_fd);
+                continue;
+            }
+
+            std::uint32_t client_events = EPOLLIN | EPOLLRDHUP;
+            if (session->HasPendingWrite()) {
+                // 只有队列中有待发送数据时才监听 EPOLLOUT，避免空转。
+                client_events |= EPOLLOUT;
+            }
+            UpdateEpollEvents(event_fd, client_events);
         }
     }
 }
@@ -158,9 +192,9 @@ void CServer::AcceptClients()
         }
 
         try {
-            // 当前只关心断开和异常事件，收到业务数据时不会调用 recv。
-            AddToEpoll(client_fd, EPOLLRDHUP);
-            m_client_fds.insert(client_fd);
+            AddToEpoll(client_fd, EPOLLIN | EPOLLRDHUP);
+            // CServer 保存 Session 并统一管理 fd 的关闭时机。
+            m_client_fds[client_fd] = std::make_shared<Session>(client_fd);
         }
         catch (const std::exception& exception) {
             std::cerr << "登记客户端连接失败：" << exception.what() << std::endl;
@@ -199,6 +233,7 @@ void CServer::CloseClient(int client_fd)
     std::cout << "客户端已断开，fd=" << client_fd << std::endl;
 }
 
+
 void CServer::AddToEpoll(int fd, std::uint32_t events)
 {
     epoll_event event{};
@@ -206,5 +241,15 @@ void CServer::AddToEpoll(int fd, std::uint32_t events)
     event.data.fd = fd;
     if (::epoll_ctl(m_epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
         throw MakeSystemError("注册 epoll 事件失败");
+    }
+}
+
+void CServer::UpdateEpollEvents(int fd, std::uint32_t events)
+{
+    epoll_event event{};
+    event.events = events;
+    event.data.fd = fd;
+    if (::epoll_ctl(m_epoll_fd, EPOLL_CTL_MOD, fd, &event) == -1) {
+        throw MakeSystemError("更新 epoll 事件失败");
     }
 }

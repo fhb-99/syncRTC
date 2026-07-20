@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(RealtimeServer VERSION 0.1.0 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -19,6 +21,7 @@ set(REAL_SERVER_SOURCES
     RealtimeServer.cpp
     src/config/ConfigMgr.cpp
     src/net/CServer.cpp
+    src/net/Session.cpp
 )
 
 add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
@@ -55,3 +58,19 @@ add_custom_command(TARGET RealtimeServer POST_BUILD
         "$<TARGET_FILE_DIR:RealtimeServer>/conf/config.ini"
     COMMENT "Copying RealtimeServer runtime configuration"
 )
+
+if(BUILD_TESTING)
+    add_executable(session_test
+        tests/SessionTest.cpp
+        src/net/Session.cpp
+    )
+    target_include_directories(session_test
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_compile_options(session_test
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    add_test(NAME session_test COMMAND session_test)
+endif()
