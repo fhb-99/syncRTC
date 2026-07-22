@@ -19,17 +19,30 @@ int main()
         return 1;
     }
 
-    const std::string key = "auth:session:" + first;
-    if (!RedisMgr::GetInstance()->Set(key, "42", 60)) {
+    const std::string device_id = "test-device-id";
+    const std::string key = "auth::session:" + first;
+    if (!LogicSystem::SaveSession(first, 42, device_id)) {
         std::cerr << "token session was not stored in Redis" << std::endl;
         return 1;
     }
 
-    std::string uid;
-    const bool found = RedisMgr::GetInstance()->Get(key, uid);
-    RedisMgr::GetInstance()->Del(key);
-    if (!found || uid != "42") {
+    int uid = 0;
+    const bool found = LogicSystem::ValidateSession(first, device_id, uid);
+    if (!found || uid != 42) {
+        RedisMgr::GetInstance()->Del(key);
         std::cerr << "token session was not read from Redis" << std::endl;
+        return 1;
+    }
+
+    if (LogicSystem::ValidateSession(first, "another-device", uid)) {
+        RedisMgr::GetInstance()->Del(key);
+        std::cerr << "token session accepted a different device" << std::endl;
+        return 1;
+    }
+
+    RedisMgr::GetInstance()->Del(key);
+    if (LogicSystem::ValidateSession(first, device_id, uid)) {
+        std::cerr << "deleted token session was still accepted" << std::endl;
         return 1;
     }
 

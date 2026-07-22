@@ -126,6 +126,7 @@ public:
 	bool UpdatePwd(const std::string& email, const std::string& newpwd);
 
     bool GetUserInfo(const std::string& email, UserInfo& user);
+    bool GetUserInfoByUid(int uid, UserInfo& user);
     
 private:
     friend class Singleton<MysqlMgr>;

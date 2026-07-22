@@ -91,7 +91,6 @@ void LogicSystem::LoginHandler(std::shared_ptr<Session> session, std::uint16_t&,
     auto token = root["token"].asString();
     auto email = root["email"].asString();
     std::cout << "uid is: " << uid << std::endl;
-    std::cout << "token is: " << token << std::endl;
 
     Json::Value res;
     Defer defer([this, session, &res](){
@@ -107,8 +106,15 @@ void LogicSystem::LoginHandler(std::shared_ptr<Session> session, std::uint16_t&,
         return;
     }
 
-    int user_id = std::stoi(tmp);
-    if(uid != user_id) {
+    Json::Value session_info;
+    Json::Reader session_reader;
+    if (!session_reader.parse(tmp, session_info)) {
+        res["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+
+    const int user_id = session_info["uid"].asInt();
+    if (user_id <= 0 || uid != user_id) {
         res["error"] = ErrorCodes::ERROR_TOKEN;
         return;
     }

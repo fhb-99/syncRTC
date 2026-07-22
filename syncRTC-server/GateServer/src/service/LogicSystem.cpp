@@ -35,6 +35,7 @@ namespace {
 
 constexpr unsigned long kBcryptCost = 12;
 constexpr int kTokenExpireSeconds = 7 * 24 * 60 * 60;
+constexpr char kSessionKeyPrefix[] = "auth::session:";
 
 } // namespace
 
@@ -86,6 +87,47 @@ std::string LogicSystem::GenerateToken()
         token << std::setw(2) << static_cast<int>(byte);
     }
     return token.str();
+}
+
+bool LogicSystem::SaveSession(const std::string& token, int uid,
+                              const std::string& device_id)
+{
+    if (token.empty() || uid <= 0 || device_id.empty()) {
+        return false;
+    }
+
+    Json::Value session;
+    session["uid"] = uid;
+    session["device_id"] = device_id;
+
+    // 会话只保存用户和设备标识，Redis 的 TTL 即会话有效期。
+    return RedisMgr::GetInstance()->Set(kSessionKeyPrefix + token,
+                                        session.toStyledString(),
+                                        kTokenExpireSeconds);
+}
+
+bool LogicSystem::ValidateSession(const std::string& token,
+                                  const std::string& device_id, int& uid)
+{
+    uid = 0;
+    if (token.empty() || device_id.empty()) {
+        return false;
+    }
+
+    std::string session_value;
+    if (!RedisMgr::GetInstance()->Get(kSessionKeyPrefix + token, session_value)) {
+        return false;
+    }
+
+    Json::Value session;
+    Json::Reader reader;
+    if (!reader.parse(session_value, session) ||
+        session["device_id"].asString() != device_id) {
+        return false;
+    }
+
+    uid = session["uid"].asInt();
+    return uid > 0;
 }
 
 
@@ -247,7 +289,7 @@ LogicSystem::LogicSystem()
 
     RegisterPost("/login_user", [](std::shared_ptr<HttpConnection> connection) {
         auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
-		std::cout << "receive body is " << body_str << std::endl;
+		// 请求体包含密码或会话令牌，不能写入日志。
 		connection->_response.set(http::field::content_type, "text/json");
 		Json::Value root;
 		Json::Reader reader;
@@ -261,8 +303,72 @@ LogicSystem::LogicSystem()
 			return true;
 		}
 
-        auto email = src_root["account"].asString();
-        auto password = src_root["password"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        if (device_id.empty()) {
+            root["error"] = ErrorCodes::ERROR_JSON;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if (src_root.isMember("session_token")) {
+            // 会话恢复请求不携带账号和密码，只校验令牌所属设备。
+            const std::string session_token = src_root["session_token"].asString();
+            if (!RedisMgr::GetInstance()->IsConnected()) {
+                root["error"] = ErrorCodes::ERROR_REDIS;
+                std::string jsonstr = root.toStyledString();
+                beast::ostream(connection->_response.body()) << jsonstr;
+                return true;
+            }
+
+            int uid = 0;
+            if (!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+                root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                    ? ErrorCodes::ERROR_SESSION_INVALID
+                                    : ErrorCodes::ERROR_REDIS;
+                std::string jsonstr = root.toStyledString();
+                beast::ostream(connection->_response.body()) << jsonstr;
+                return true;
+            }
+
+            UserInfo user_info;
+            if (!MysqlMgr::GetInstance()->GetUserInfoByUid(uid, user_info)) {
+                root["error"] = ErrorCodes::ERROR_MYSQL;
+                std::string jsonstr = root.toStyledString();
+                beast::ostream(connection->_response.body()) << jsonstr;
+                return true;
+            }
+
+            // 校验通过后续期，token 不变。
+            if (!LogicSystem::SaveSession(session_token, user_info.uid, device_id)) {
+                root["error"] = ErrorCodes::ERROR_REDIS;
+                std::string jsonstr = root.toStyledString();
+                beast::ostream(connection->_response.body()) << jsonstr;
+                return true;
+            }
+
+            auto& config = ConfigMgr::Init();
+            root["error"] = ErrorCodes::SUCCESS;
+            root["email"] = user_info.email;
+            root["uid"] = user_info.uid;
+            root["username"] = user_info.username;
+            root["session_token"] = session_token;
+            root["host"] = config["RealtimeServer"]["Host"];
+            root["port"] = config["RealtimeServer"]["Port"];
+            root["expires_in"] = kTokenExpireSeconds;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        const std::string email = src_root["account"].asString();
+        const std::string password = src_root["password"].asString();
+        if (email.empty() || password.empty()) {
+            root["error"] = ErrorCodes::ERROR_JSON;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
         
         // 检查密码是否匹配
         std::string password_hash = "";
@@ -300,10 +406,9 @@ LogicSystem::LogicSystem()
         }
 
         // 随机生成token， redis存储token， 设置过期时间 
-        const std::string token = LogicSystem::GenerateToken();
-        if(token.empty() || !RedisMgr::GetInstance()->Set("auth::session:" + token, 
-                                                        std::to_string(user_info.uid),
-                                                        kTokenExpireSeconds)) {
+        const std::string session_token = LogicSystem::GenerateToken();
+        if (session_token.empty() ||
+            !LogicSystem::SaveSession(session_token, user_info.uid, device_id)) {
             std::cout << "Store token failed" << std::endl;
             root["error"] = ErrorCodes::ERROR_REDIS;
             std::string jsonstr = root.toStyledString();
@@ -316,7 +421,7 @@ LogicSystem::LogicSystem()
         root["email"] = email;
         root["uid"] = user_info.uid;
         root["username"] = user_info.username;
-        root["token"] = token;
+        root["session_token"] = session_token;
         root["host"] = host;
         root["port"] = port;
         root["expires_in"] = kTokenExpireSeconds;

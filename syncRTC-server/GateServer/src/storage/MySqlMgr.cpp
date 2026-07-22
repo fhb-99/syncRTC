@@ -203,3 +203,41 @@ bool MysqlMgr::GetUserInfo(const std::string& email, UserInfo& user)
 		return false;
     }
 }
+
+bool MysqlMgr::GetUserInfoByUid(int uid, UserInfo& user)
+{
+    if (!pool_ || uid <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT id, username, email FROM users WHERE id = ?"));
+        pstmt->setInt(1, uid);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        if (!res->next()) {
+            return false;
+        }
+
+        user.uid = res->getInt("id");
+        user.username = res->getString("username").asStdString();
+        user.email = res->getString("email").asStdString();
+        return !user.username.empty() && !user.email.empty();
+    }
+    catch (sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what()
+                  << " (MySQL error code: " << e.getErrorCode()
+                  << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
