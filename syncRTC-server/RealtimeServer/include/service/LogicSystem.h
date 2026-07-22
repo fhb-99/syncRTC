@@ -24,7 +24,7 @@ using callback = std::function<void(std::shared_ptr<Session> session,
                                     std::uint16_t id,
                                     std::string message)>;
 
-class LogicSystem : public Singleton<LogicSystem>
+class LogicSystem : public Singleton<LogicSystem>, public std::enable_shared_from_this<LogicSystem>
 {
     friend class Singleton<LogicSystem>;
 public:
@@ -40,6 +40,9 @@ private:
 
     void initHandlers();
     std::unordered_map<std::uint16_t, callback> maps;
+
+    // 客户端登录处理
+    void LoginHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     bool m_stop;
     std::mutex m_mutex;

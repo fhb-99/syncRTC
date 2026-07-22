@@ -4,6 +4,12 @@ project(RealtimeServer VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 
+# 放在CMake文件最顶部
+set(CMAKE_BUILD_TYPE Debug CACHE STRING "")
+
+# 强制生成调试符号、关闭编译器优化
+add_compile_options(-g -O0 -Wall -Wextra)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -17,18 +23,65 @@ foreach(CONFIGURATION Debug Release RelWithDebInfo MinSizeRel)
         "${CMAKE_CURRENT_SOURCE_DIR}/bin")
 endforeach()
 
-set(REAL_SERVER_SOURCES
-    RealtimeServer.cpp
+set(REALTIME_LOGIC_SOURCES
     src/config/ConfigMgr.cpp
-    src/net/CServer.cpp
     src/net/Session.cpp
     src/service/LogicSystem.cpp
+    src/storage/RedisMgr.cpp
+    src/storage/MySqlMgr.cpp
+)
+
+set(REAL_SERVER_SOURCES
+    RealtimeServer.cpp
+    src/net/CServer.cpp
+    ${REALTIME_LOGIC_SOURCES}
 )
 
 add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(Threads REQUIRED)
+find_package(jsoncpp CONFIG REQUIRED)
+
+# Redis++ 在当前环境中没有 CMake 包，显式补齐它与 hiredis 的依赖关系。
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis)
+find_path(REDIS_PLUS_PLUS_INCLUDE_DIR
+    NAMES sw/redis++/redis++.h
+    HINTS /usr/local/include
+    REQUIRED
+)
+find_library(REDIS_PLUS_PLUS_LIBRARY
+    NAMES redis++
+    HINTS /usr/local/lib
+    REQUIRED
+)
+add_library(SyncRTC::RedisPlusPlus UNKNOWN IMPORTED)
+set_target_properties(SyncRTC::RedisPlusPlus PROPERTIES
+    IMPORTED_LOCATION "${REDIS_PLUS_PLUS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${REDIS_PLUS_PLUS_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "PkgConfig::HIREDIS"
+)
+
+# LoginHandler 会通过 MysqlMgr 查询用户信息，链接 MySQL Connector/C++ 与 mysqlclient。
+find_path(MYSQLCPPCONN_INCLUDE_DIR NAMES mysql_driver.h REQUIRED)
+find_library(MYSQLCPPCONN_LIBRARY NAMES mysqlcppconn REQUIRED)
+find_library(MYSQLCLIENT_LIBRARY NAMES mysqlclient REQUIRED)
+add_library(MySQL::ConnectorCpp UNKNOWN IMPORTED)
+set_target_properties(MySQL::ConnectorCpp PROPERTIES
+    IMPORTED_LOCATION "${MYSQLCPPCONN_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${MYSQLCPPCONN_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${MYSQLCLIENT_LIBRARY}"
+)
+
+set(REALTIME_LOGIC_LIBRARIES
+    Threads::Threads
+    Boost::filesystem
+    Boost::system
+    JsonCpp::JsonCpp
+    SyncRTC::RedisPlusPlus
+    MySQL::ConnectorCpp
+)
 
 # 让运行时配置读取到源码目录下构建后的 bin/conf/config.ini。
 target_compile_definitions(RealtimeServer
@@ -43,9 +96,7 @@ target_include_directories(RealtimeServer
 
 target_link_libraries(RealtimeServer
     PRIVATE
-        Boost::filesystem
-        Boost::system
-        Threads::Threads
+        ${REALTIME_LOGIC_LIBRARIES}
 )
 
 target_compile_options(RealtimeServer
@@ -65,8 +116,11 @@ add_custom_command(TARGET RealtimeServer POST_BUILD
 if(BUILD_TESTING)
     add_executable(session_test
         tests/SessionTest.cpp
-        src/net/Session.cpp
-        src/service/LogicSystem.cpp
+        ${REALTIME_LOGIC_SOURCES}
+    )
+    target_compile_definitions(session_test
+        PRIVATE
+            PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
     target_include_directories(session_test
         PRIVATE
@@ -76,13 +130,16 @@ if(BUILD_TESTING)
         PRIVATE
             $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    target_link_libraries(session_test PRIVATE Threads::Threads)
+    target_link_libraries(session_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
     add_test(NAME session_test COMMAND session_test)
 
     add_executable(logic_system_test
         tests/LogicSystemTest.cpp
-        src/net/Session.cpp
-        src/service/LogicSystem.cpp
+        ${REALTIME_LOGIC_SOURCES}
+    )
+    target_compile_definitions(logic_system_test
+        PRIVATE
+            PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
     target_include_directories(logic_system_test
         PRIVATE
@@ -92,6 +149,6 @@ if(BUILD_TESTING)
         PRIVATE
             $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    target_link_libraries(logic_system_test PRIVATE Threads::Threads)
+    target_link_libraries(logic_system_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
     add_test(NAME logic_system_test COMMAND logic_system_test)
 endif()

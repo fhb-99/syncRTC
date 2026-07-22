@@ -16,7 +16,8 @@ int main()
     auto session = std::make_shared<Session>(sockets[0]);
     auto message = std::make_shared<LogicNode>();
     message->session = session;
-    message->id = AUTH_LOGIN_REQUEST;
+    // 这里只验证消息队列和工作线程，不依赖 Redis、MySQL 等外部服务。
+    message->id = 0xFFFF;
     message->message = "token";
 
     LogicSystem::GetInstance()->PostMsgToQue(message);
