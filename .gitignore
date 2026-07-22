@@ -44,3 +44,6 @@ meta_types/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local linked worktrees
+.worktrees/
