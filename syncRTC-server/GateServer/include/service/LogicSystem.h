@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <string>
 
 #include "common/Singleton.h"
 #include "common/global.h"
@@ -20,6 +21,10 @@ public:
     static bool VerifyPassword(const std::string& password,
                                const std::string& stored_hash);
     static std::string GenerateToken();
+    static bool SaveSession(const std::string& token, int uid,
+                            const std::string& device_id);
+    static bool ValidateSession(const std::string& token,
+                                const std::string& device_id, int& uid);
     bool HandleGet(std::string, std::shared_ptr<HttpConnection>);
     void RegisterGet(std::string, HttpHandler handler);
 

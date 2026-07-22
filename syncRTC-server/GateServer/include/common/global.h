@@ -26,6 +26,7 @@ enum ErrorCodes
 	ERROR_VARIFYCODE = 1004, //验证码错误
     ERROR_USER_EXIST = 1005,       //用户已经存在
     ERROR_PASSWORD_INVALID = 1006, // 密码无效，不匹配
+    ERROR_SESSION_INVALID = 1007, // 登录会话失效
 };
 
 

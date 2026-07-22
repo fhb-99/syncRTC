@@ -36,11 +36,11 @@ public:
 class MysqlPool {
 public:
     MysqlPool(const std::string& url, const std::string& user, const std::string& pass, const std::string& schema, int poolSize)
-        : url_(url), 
-        user_(user), 
-        pass_(pass), 
-        schema_(schema), 
-        poolSize_(poolSize), 
+        : url_(url),
+        user_(user),
+        pass_(pass),
+        schema_(schema),
+        poolSize_(poolSize),
         b_stop_(false)
     {
         try {
@@ -67,10 +67,10 @@ public:
 
     std::unique_ptr<SqlConnection> getConnection() {
         std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this] { 
+        cond_.wait(lock, [this] {
             if (b_stop_) {
                 return true;
-            }        
+            }
             return !pool_.empty(); });
         if (b_stop_) {
             return nullptr;
@@ -126,8 +126,7 @@ public:
 	bool UpdatePwd(const std::string& email, const std::string& newpwd);
 
     bool GetUserInfo(const std::string& email, UserInfo& user);
-    bool GetUserInfoByUid(int uid, UserInfo& user);
-    
+
 private:
     friend class Singleton<MysqlMgr>;
     MysqlMgr();

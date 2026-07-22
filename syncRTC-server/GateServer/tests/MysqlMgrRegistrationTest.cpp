@@ -69,6 +69,14 @@ int main()
         return 1;
     }
 
+    UserInfo user_by_uid;
+    if (!MysqlMgr::GetInstance()->GetUserInfoByUid(first, user_by_uid) ||
+        user_by_uid.uid != first || user_by_uid.username != username ||
+        user_by_uid.email != email) {
+        std::cerr << "registered user was not found by uid" << std::endl;
+        return 1;
+    }
+
     const int duplicate = MysqlMgr::GetInstance()->RegisterUser(
         username + "_second", email, "test-password-hash");
     if (duplicate != 0) {

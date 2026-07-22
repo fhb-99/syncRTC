@@ -12,7 +12,7 @@ MysqlMgr::MysqlMgr()
 
 	//mysql 必须加scheem 就像redis-plus-plus —— tcp://127.0.0.1:3306
 	std::string url = host;
-	if(url.find("://") == std::string::npos) 
+	if(url.find("://") == std::string::npos)
 	{
 		url = "tcp://" + host + ":" + port;
 	}
@@ -114,7 +114,7 @@ bool MysqlMgr::CheckPwd(const std::string& email, std::string& password_hash)
         std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
             "SELECT password_hash FROM users WHERE email = ?"));
         pstmt->setString(1, email);
-        
+
         std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
 
         password_hash.clear();
@@ -201,43 +201,5 @@ bool MysqlMgr::GetUserInfo(const std::string& email, UserInfo& user)
 		std::cerr << " (MySQL error code: " << e.getErrorCode();
 		std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
 		return false;
-    }
-}
-
-bool MysqlMgr::GetUserInfoByUid(int uid, UserInfo& user)
-{
-    if (!pool_ || uid <= 0) {
-        return false;
-    }
-
-    auto con = pool_->getConnection();
-    if (!con || !con->_con) {
-        return false;
-    }
-
-    Defer defer([this, &con](){
-        pool_->returnConnection(std::move(con));
-    });
-
-    try {
-        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
-            "SELECT id, username, email FROM users WHERE id = ?"));
-        pstmt->setInt(1, uid);
-
-        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
-        if (!res->next()) {
-            return false;
-        }
-
-        user.uid = res->getInt("id");
-        user.username = res->getString("username").asStdString();
-        user.email = res->getString("email").asStdString();
-        return !user.username.empty() && !user.email.empty();
-    }
-    catch (sql::SQLException& e) {
-        std::cerr << "SQLException: " << e.what()
-                  << " (MySQL error code: " << e.getErrorCode()
-                  << ", SQLState: " << e.getSQLState() << " )" << std::endl;
-        return false;
     }
 }
