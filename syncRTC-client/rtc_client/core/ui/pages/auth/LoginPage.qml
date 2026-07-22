@@ -53,6 +53,21 @@ Item {
         }
     }
 
+    Connections {
+        target: realtimeController
+
+        function onProfileReady() {
+            root.loginPending = false
+            root.showNotice("登录成功，正在进入会议...", false)
+            root.loginSucceeded(currentUser.username, currentUser.email)
+        }
+
+        function onLoginFailed(error) {
+            root.loginPending = false
+            root.showNotice("TCP 登录失败，错误码：" + error, true)
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#f5f8ff"

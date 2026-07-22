@@ -43,10 +43,7 @@ Window {
                 root.loggedInUsername = username
                 root.loggedInEmail = email
                 root.loginSucceeded(username, email)
-                stackView.replace(meetingShell, {
-                    "username": username,
-                    "email": email
-                })
+                stackView.replace(meetingShell)
             }
 
             onRegisterRequested: stackView.push(registerPage)
@@ -89,8 +86,8 @@ Window {
         id: meetingShell
 
         MeetingShell {
-            username: root.isUiPreviewMode ? root.previewUsername : ""
-            email: root.isUiPreviewMode ? root.previewEmail : ""
+            previewUsername: root.isUiPreviewMode ? root.previewUsername : ""
+            previewEmail: root.isUiPreviewMode ? root.previewEmail : ""
         }
     }
 }

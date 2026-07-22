@@ -6,6 +6,8 @@
 #include <QSettings>
 
 #include "controllers/auth/AuthController.h"
+#include "controllers/meeting/realtimecontroller.h"
+#include "models/currentuserstate.h"
 #include "models/global.h"
 
 int main(int argc, char *argv[])
@@ -40,6 +42,12 @@ int main(int argc, char *argv[])
 
     AuthController authController;
     engine.rootContext()->setContextProperty("authController", &authController);
+
+    CurrentUserState currentUser;
+    RealtimeController realtimeController(&currentUser);
+
+    engine.rootContext()->setContextProperty("currentUser", &currentUser);
+    engine.rootContext()->setContextProperty("realtimeController", &realtimeController);
 
     QObject::connect(
         &engine,

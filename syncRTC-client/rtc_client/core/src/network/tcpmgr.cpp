@@ -4,6 +4,8 @@
 #include <QDataStream>
 #include <QIODevice>
 #include <QtEndian>
+#include <qjsondocument.h>
+#include <QJsonObject>
 
 TcpMgr::TcpMgr(QObject *parent)
     : QObject{parent},
@@ -77,7 +79,18 @@ TcpMgr::TcpMgr(QObject *parent)
 
 void TcpMgr::initHandlers()
 {
-    // 因为RequestID还没确认，todo
+    m_handlers.insert(AUTH_LOGIN_RESPONSE, [this](RequestID id, int len, QByteArray data){
+        Q_UNUSED(len)
+
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(data);
+        if (!jsonDoc.isObject()) {
+            qDebug() << "FAILED TO CREATE LOGIN RESPONSE JSON";
+            return;
+        }
+
+        // TcpMgr 只解帧和解析 JSON，不解释登录成功或失败等业务含义
+        emit signal_message_recv(id, jsonDoc.object());
+    });
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

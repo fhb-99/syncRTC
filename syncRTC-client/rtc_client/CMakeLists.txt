@@ -56,6 +56,9 @@ qt_add_qml_module(apprtc_client
         RESOURCES config/config.ini
         SOURCES core/src/models/Data.h
         SOURCES core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
+        SOURCES core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
+        SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
+        SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -82,6 +85,48 @@ target_link_libraries(apprtc_client
         Qt6::QuickControls2
         Qt6::Svg
 )
+
+include(CTest)
+
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+
+    qt_add_executable(currentuserstate_test
+        core/tests/currentuserstate_test.cpp
+        core/src/models/currentuserstate.h
+        core/src/models/currentuserstate.cpp
+    )
+
+    target_link_libraries(currentuserstate_test
+        PRIVATE
+            Qt6::Test
+    )
+
+    add_test(NAME currentuserstate_test COMMAND currentuserstate_test)
+
+    qt_add_executable(realtimecontroller_test
+        core/tests/realtimecontroller_test.cpp
+        core/src/models/currentuserstate.h
+        core/src/models/currentuserstate.cpp
+        core/src/models/Data.h
+        core/src/models/Singleton.h
+        core/src/models/global.h
+        core/src/network/tcpmgr.h
+        core/src/network/tcpmgr.cpp
+        core/src/controllers/meeting/profilecontroller.h
+        core/src/controllers/meeting/profilecontroller.cpp
+        core/src/controllers/meeting/realtimecontroller.h
+        core/src/controllers/meeting/realtimecontroller.cpp
+    )
+
+    target_link_libraries(realtimecontroller_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Network
+    )
+
+    add_test(NAME realtimecontroller_test COMMAND realtimecontroller_test)
+endif()
 
 include(GNUInstallDirs)
 install(TARGETS apprtc_client

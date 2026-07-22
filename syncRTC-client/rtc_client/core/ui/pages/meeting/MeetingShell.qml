@@ -5,8 +5,11 @@ import QtQuick.Layouts
 Item {
     id: root
 
-    property string username: ""
-    property string email: ""
+    // 登录后直接绑定 C++ 注入的 currentUser，资料更新时各子页会自动刷新。
+    property string previewUsername: ""
+    property string previewEmail: ""
+    readonly property string username: currentUser.username.length > 0 ? currentUser.username : previewUsername
+    readonly property string email: currentUser.email.length > 0 ? currentUser.email : previewEmail
     property string currentSection: "home"
     property string toastMessage: ""
 
