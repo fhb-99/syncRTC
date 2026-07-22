@@ -6,28 +6,55 @@
 
 #include "../../models/Data.h"
 #include "../../models/global.h"
+#include "../../models/sessioncredentialstore.h"
 
 
 class LoginController : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool hasRememberedSession READ hasRememberedSession NOTIFY rememberedSessionChanged)
 
 public:
-    explicit LoginController(QObject *parent = nullptr);
+    explicit LoginController(QObject *parent = nullptr,
+                             const QString &credentialTarget = SessionCredentialStore::defaultTargetName());
 
-    Q_INVOKABLE void LoginRequest(const QString& account, const QString& password);
+    Q_INVOKABLE void LoginRequest(const QString& account, const QString& password, bool rememberLogin);
+    Q_INVOKABLE void ResumeLoginRequest();
+    Q_INVOKABLE void ForgetRememberedSession();
+
+    void setDeviceID(const QString& device_id) { m_device_id = device_id; }
+    QString DeviceID() { return m_device_id; }
+    bool hasRememberedSession() const { return m_hasRememberedSession; }
 
 private:
+    enum class LoginMode {
+        Password,
+        RememberedSession,
+    };
+
     QMap<RequestID, std::function<void(const QJsonObject&)>> m_handlers;
 
     void initHttpHandlers();
 
     bool checkPasswordValid(const QString& password);
+    bool saveRememberedSession(const QString &account, const QString &sessionToken);
+    bool clearRememberedSession();
 
     ServerInfo m_server;
+
+    QString m_device_id;
+    QString m_loginAccount;
+    QString m_rememberedAccount;
+    QString m_rememberedSessionToken;
+    SessionCredentialStore m_sessionStore;
+    LoginMode m_loginMode = LoginMode::Password;
+    bool m_rememberLoginRequested = false;
+    bool m_hasRememberedSession = false;
 signals:
     void loginSucceeded(const QString& username, const QString& email);
     void loginFailed(const QString& reason);
+    void rememberedSessionChanged();
+    void rememberLoginWarning(const QString &reason);
     void signal_connect_tcp(ServerInfo);
 public slots:
     //  http

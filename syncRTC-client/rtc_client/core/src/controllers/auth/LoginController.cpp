@@ -4,16 +4,20 @@
 #include "../../network/tcpmgr.h"
 
 #include <QDebug>
-#include <QRegularExpression>
-#include <QRegularExpressionValidator>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 
-LoginController::LoginController(QObject *parent)
-    : QObject(parent)
+LoginController::LoginController(QObject *parent, const QString &credentialTarget)
+    : QObject(parent),
+      m_sessionStore(credentialTarget)
 {
     initHttpHandlers();
 
+    // 令牌只保留在控制器内存和 Windows 凭据库中，绝不暴露给 QML。
+    m_hasRememberedSession = m_sessionStore.load(&m_rememberedAccount, &m_rememberedSessionToken);
+
+    // LoginController 负责使用 GateServer 返回的地址建立 RealtimeServer TCP 连接
     connect(this, &LoginController::signal_connect_tcp,
             TcpMgr::GetInstance().get(), &TcpMgr::slot_tcp_connect);
     connect(TcpMgr::GetInstance().get(), &TcpMgr::signal_connect_success,
@@ -22,10 +26,10 @@ LoginController::LoginController(QObject *parent)
             this, &LoginController::slot_login_failed);
 }
 
-void LoginController::LoginRequest(const QString &account, const QString &password)
+void LoginController::LoginRequest(const QString &account, const QString &password, bool rememberLogin)
 {
-    qDebug() << "Login......";
-    if(!checkPasswordValid(password)) {
+    qDebug() << "Login request";
+    if (!checkPasswordValid(password)) {
         emit loginFailed("密码格式不正确");
         return;
     }
@@ -33,72 +37,147 @@ void LoginController::LoginRequest(const QString &account, const QString &passwo
     QJsonObject json;
     json["account"] = account;
     json["password"] = password;
+    json["device_id"] = m_device_id;
+    m_loginMode = LoginMode::Password;
+    m_rememberLoginRequested = rememberLogin;
+    m_loginAccount = account;
     HttpMgr::GetInstance()->PostHttpRequest(QUrl(GateServer_URL + "/login_user"),
                                             json,
                                             RequestID::ID_LOGIN_USER,
                                             Modules::LOGIN_MOD);
 }
 
+void LoginController::ResumeLoginRequest()
+{
+    if (!m_hasRememberedSession) {
+        emit loginFailed("没有可用的登录状态");
+        return;
+    }
+
+    QJsonObject json;
+    json["session_token"] = m_rememberedSessionToken;
+    json["device_id"] = m_device_id;
+    m_loginMode = LoginMode::RememberedSession;
+    m_rememberLoginRequested = true;
+    HttpMgr::GetInstance()->PostHttpRequest(QUrl(GateServer_URL + "/login_user"),
+                                            json,
+                                            RequestID::ID_LOGIN_USER,
+                                            Modules::LOGIN_MOD);
+}
+
+void LoginController::ForgetRememberedSession()
+{
+    if (!clearRememberedSession()) {
+        emit rememberLoginWarning("无法清除已保存的登录状态");
+    }
+}
+
 void LoginController::initHttpHandlers()
 {
-    m_handlers.insert(RequestID::ID_LOGIN_USER, [this](QJsonObject json){
-        int error = json["error"].toInt();
-        if(error != ErrorCodes::SUCCESS) {
+    m_handlers.insert(RequestID::ID_LOGIN_USER, [this](QJsonObject json) {
+        const int error = json["error"].toInt();
+        if (error != ErrorCodes::SUCCESS) {
+            if (m_loginMode == LoginMode::RememberedSession
+                && error == ErrorCodes::ERROR_SESSION_INVALID) {
+                if (!clearRememberedSession()) {
+                    emit rememberLoginWarning("无法清除已失效的登录状态");
+                }
+                emit loginFailed("登录状态已过期，请重新登录");
+                return;
+            }
+
             emit loginFailed("登录失败");
-            qDebug() << "LOGIN FAILED ERROR " << error;
+            qDebug() << "Login request failed:" << error;
             return;
         }
-        // 从GateServer服务获取对应信息，同时展示主界面
-        auto username = json["username"].toString();
-        auto email = json["email"].toString();
+
+        const QString sessionToken = json["session_token"].toString();
+        if (sessionToken.isEmpty()) {
+            emit loginFailed("登录响应缺少会话凭据");
+            return;
+        }
+
+        m_server.email = json["email"].toString();
         m_server.host = json["host"].toString();
         m_server.port = json["port"].toString();
         m_server.uid = json["uid"].toInt();
-        m_server.token = json["token"].toString();
-        int expires_in = json["expires_in"].toInt();
+        m_server.sessionToken = sessionToken;
 
-        // 同时，与服务器建立tcp长连接
+        if (m_loginMode == LoginMode::Password && !m_rememberLoginRequested) {
+            if (!clearRememberedSession()) {
+                emit rememberLoginWarning("无法清除已保存的登录状态");
+            }
+        } else {
+            const QString account = m_loginMode == LoginMode::Password
+                ? m_loginAccount
+                : m_rememberedAccount;
+            if (!saveRememberedSession(account, sessionToken)) {
+                emit rememberLoginWarning("无法记住本次登录状态");
+            }
+        }
+
+        // HTTP 登录成功后，由 LoginController 触发 RealtimeServer 的 TCP 连接。
         emit signal_connect_tcp(m_server);
     });
 }
 
 bool LoginController::checkPasswordValid(const QString &password)
 {
-    if(password.length() < 6) return false;
+    if (password.length() < 6) {
+        return false;
+    }
 
-    // 创建一个正则表达式对象，按照上述密码要求
-    // 这个正则表达式解释：
-    // ^[a-zA-Z0-9!@#$%^&*]{6,15}$ 密码长度至少6，可以是字母、数字和特定的特殊字符
-    QRegularExpression regExp("^[a-zA-Z0-9!@#$%^&*.]{6,15}$");
-    bool match = regExp.match(password).hasMatch();
-    return match;
+    const QRegularExpression regExp("^[a-zA-Z0-9!@#$%^&*.]{6,15}$");
+    return regExp.match(password).hasMatch();
+}
+
+bool LoginController::saveRememberedSession(const QString &account, const QString &sessionToken)
+{
+    if (!m_sessionStore.save(account, sessionToken)) {
+        return false;
+    }
+
+    const bool changed = !m_hasRememberedSession;
+    m_rememberedAccount = account;
+    m_rememberedSessionToken = sessionToken;
+    m_hasRememberedSession = true;
+    if (changed) {
+        emit rememberedSessionChanged();
+    }
+    return true;
+}
+
+bool LoginController::clearRememberedSession()
+{
+    const bool cleared = m_sessionStore.clear();
+
+    const bool changed = m_hasRememberedSession;
+    m_rememberedAccount.clear();
+    m_rememberedSessionToken.clear();
+    m_hasRememberedSession = false;
+    if (changed) {
+        emit rememberedSessionChanged();
+    }
+    return cleared;
 }
 
 void LoginController::slot_login_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error)
 {
-    if(error != ErrorCodes::SUCCESS) {
+    if (error != ErrorCodes::SUCCESS) {
         emit loginFailed("网络异常");
-        qDebug() << "NETWORK ERROR " << error;
+        qDebug() << "Login HTTP network error:" << error;
         return;
     }
 
-    // 解析json，将字节流转QJsonDocument，QJsonObject解析
-    QJsonDocument jsonDoc = QJsonDocument::fromJson(res);
-
-    if(jsonDoc.isEmpty()) {
+    const QJsonDocument jsonDoc = QJsonDocument::fromJson(res);
+    if (!jsonDoc.isObject()) {
         emit loginFailed("数据异常");
-        qDebug() << "JSON ANALYSIS ERROR";
-        return;
-    }
-
-    if(!jsonDoc.isObject()) {
-        emit loginFailed("数据异常");
-        qDebug() << "JSON ANALYSIS ERROR";
+        qDebug() << "Login HTTP JSON parse error";
         return;
     }
 
     if (!m_handlers.contains(reqID)) {
-        qDebug() << "NO HANDLER FOR REQUEST ID" << reqID;
+        qDebug() << "No handler for request id:" << reqID;
         return;
     }
 
@@ -107,27 +186,23 @@ void LoginController::slot_login_mod_finish(RequestID reqID, QByteArray res, Err
 
 void LoginController::slot_connect_success(bool success)
 {
-    if(success){
-        qDebug() << "聊天服务连接成功，正在登录...";
-        QJsonObject jsonObj;
-        jsonObj["uid"] = m_server.uid;
-        jsonObj["token"] = m_server.token;
-
-        QJsonDocument doc(jsonObj);
-        QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
-
-        //发送tcp请求给chat server
-        emit TcpMgr::GetInstance()->signal_send_data(RequestID::ID_MEETING_LOGIN, jsonData);
-
-    }else{
-        qDebug() << "LOGIN FAILED";
-        emit loginFailed("网络错误");
+    if (!success) {
+        emit loginFailed("TCP 连接失败");
+        return;
     }
+
+    QJsonObject json;
+    json["uid"] = m_server.uid;
+    json["token"] = m_server.sessionToken;
+    json["email"] = m_server.email;
+
+    // 连接成功后由 LoginController 发送 RealtimeServer 鉴权请求
+    const QJsonDocument document(json);
+    TcpMgr::GetInstance()->slot_send_data(
+        AUTH_LOGIN_REQUEST, document.toJson(QJsonDocument::Compact));
 }
 
 void LoginController::slot_login_failed(int error)
 {
-    QString result = QString("登录失败, err is %1")
-                         .arg(error);
-    emit loginFailed(result);
+    emit loginFailed(QString("登录失败，错误码：%1").arg(error));
 }

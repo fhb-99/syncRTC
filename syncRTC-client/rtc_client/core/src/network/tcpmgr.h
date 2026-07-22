@@ -41,6 +41,9 @@ signals:
     void signal_connect_success(bool success);
     void signal_send_data(RequestID reqID, QByteArray data);
     void signal_login_failed(int);
+
+    // TcpMgr 只转发解析后的回包，业务分发由 RealtimeController 完成。
+    void signal_message_recv(RequestID, QJsonObject);
 };
 
 #endif // TCPMGR_H

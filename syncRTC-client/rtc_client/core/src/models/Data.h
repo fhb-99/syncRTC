@@ -6,9 +6,10 @@
 
 struct ServerInfo {
     int uid;
+    QString email;
     QString host;
     QString port;
-    QString token;
+    QString sessionToken;
 };
 
 struct UserData {

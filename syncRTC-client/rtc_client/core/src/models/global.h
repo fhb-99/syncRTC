@@ -10,7 +10,8 @@ enum RequestID {
     ID_REISTER_USER = 1001,
     ID_RESET_USER = 1002,
     ID_LOGIN_USER = 1003,
-    ID_MEETING_LOGIN = 1004,
+    AUTH_LOGIN_REQUEST = 1010,
+    AUTH_LOGIN_RESPONSE = 1011,
 };
 
 enum ErrorCodes {
@@ -25,6 +26,7 @@ enum ErrorCodes {
     ERROR_VARIFYCODE = 1004, //验证码错误
     ERROR_USER_EXIST = 1005,       //用户已经存在
     ERROR_PASSWORD_INVALID = 1006, // 密码无效
+    ERROR_SESSION_INVALID = 1007, // 登录会话失效
 };
 
 enum Modules {
@@ -32,6 +34,7 @@ enum Modules {
     REGISTER_MOD = 2,
     RESET_MOD = 3
 };
+
 // RAII，保证资源安全释放
 class Defer {
 public:
