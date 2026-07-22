@@ -35,9 +35,12 @@ Window {
         id: loginPage
 
         LoginPage {
-            onLoginRequested: function(account, password) {
-                authController.loginController.LoginRequest(account, password)
+            onLoginRequested: function(account, password, rememberLogin) {
+                authController.loginController.LoginRequest(account, password, rememberLogin)
             }
+
+            onRememberedLoginRequested: authController.loginController.ResumeLoginRequest()
+            onUseOtherAccountRequested: authController.loginController.ForgetRememberedSession()
 
             onLoginSucceeded: function(username, email) {
                 root.loggedInUsername = username

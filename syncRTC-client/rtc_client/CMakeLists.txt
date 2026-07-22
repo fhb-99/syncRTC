@@ -4,7 +4,7 @@ project(rtc_client VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg)
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg Network)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -54,6 +54,7 @@ qt_add_qml_module(apprtc_client
         core/src/controllers/auth/PasswordResetController.cpp
         SOURCES core/src/models/global.h
         SOURCES core/src/models/deviceidstore.h core/src/models/deviceidstore.cpp
+        SOURCES core/src/models/sessioncredentialstore.h core/src/models/sessioncredentialstore.cpp
         RESOURCES config/config.ini
         SOURCES core/src/models/Data.h
         SOURCES core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
@@ -85,7 +86,12 @@ target_link_libraries(apprtc_client
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::Svg
+        Qt6::Network
 )
+
+if(WIN32)
+    target_link_libraries(apprtc_client PRIVATE Advapi32)
+endif()
 
 include(CTest)
 
@@ -117,6 +123,52 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME deviceidstore_test COMMAND deviceidstore_test)
+
+    qt_add_executable(sessioncredentialstore_test
+        core/tests/sessioncredentialstore_test.cpp
+        core/src/models/sessioncredentialstore.h
+        core/src/models/sessioncredentialstore.cpp
+    )
+
+    target_link_libraries(sessioncredentialstore_test
+        PRIVATE
+            Qt6::Test
+    )
+
+    if(WIN32)
+        target_link_libraries(sessioncredentialstore_test PRIVATE Advapi32)
+    endif()
+
+    add_test(NAME sessioncredentialstore_test COMMAND sessioncredentialstore_test)
+
+    qt_add_executable(logincontroller_test
+        core/tests/logincontroller_test.cpp
+        core/src/controllers/auth/LoginController.h
+        core/src/controllers/auth/LoginController.cpp
+        core/src/models/Data.h
+        core/src/models/Singleton.h
+        core/src/models/deviceidstore.h
+        core/src/models/deviceidstore.cpp
+        core/src/models/global.h
+        core/src/models/sessioncredentialstore.h
+        core/src/models/sessioncredentialstore.cpp
+        core/src/network/httpmgr.h
+        core/src/network/httpmgr.cpp
+        core/src/network/tcpmgr.h
+        core/src/network/tcpmgr.cpp
+    )
+
+    target_link_libraries(logincontroller_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Network
+    )
+
+    if(WIN32)
+        target_link_libraries(logincontroller_test PRIVATE Advapi32)
+    endif()
+
+    add_test(NAME logincontroller_test COMMAND logincontroller_test)
 
     qt_add_executable(realtimecontroller_test
         core/tests/realtimecontroller_test.cpp

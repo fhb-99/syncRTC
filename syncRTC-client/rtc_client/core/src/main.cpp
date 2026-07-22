@@ -15,11 +15,18 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
 
+    QQmlApplicationEngine engine;
+
+    AuthController authController;
+    engine.rootContext()->setContextProperty("authController", &authController);
+
     QSettings deviceSettings(QSettings::IniFormat,
                              QSettings::UserScope,
                              QStringLiteral("SyncRTC"),
                              QStringLiteral("rtc_client"));
-    DeviceIdStore::loadOrCreate(deviceSettings);
+    QString device_id = DeviceIdStore::loadOrCreate(deviceSettings);
+
+    authController.GetLoginControll()->setDeviceID(device_id);
 
     const QString dir = QDir::currentPath();
     QDir configDir(dir);
@@ -45,10 +52,7 @@ int main(int argc, char *argv[])
     GateServer_URL = "http://" + GateServer_Host + ":" + GateServer_Port;
     qDebug() << "Gate Server Url: " << GateServer_URL;
 
-    QQmlApplicationEngine engine;
 
-    AuthController authController;
-    engine.rootContext()->setContextProperty("authController", &authController);
 
     CurrentUserState currentUser;
     RealtimeController realtimeController(&currentUser);
