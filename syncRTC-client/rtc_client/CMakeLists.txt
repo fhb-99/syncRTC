@@ -53,6 +53,7 @@ qt_add_qml_module(apprtc_client
         core/src/controllers/auth/PasswordResetController.h
         core/src/controllers/auth/PasswordResetController.cpp
         SOURCES core/src/models/global.h
+        SOURCES core/src/models/deviceidstore.h core/src/models/deviceidstore.cpp
         RESOURCES config/config.ini
         SOURCES core/src/models/Data.h
         SOURCES core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
@@ -103,6 +104,19 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME currentuserstate_test COMMAND currentuserstate_test)
+
+    qt_add_executable(deviceidstore_test
+        core/tests/deviceidstore_test.cpp
+        core/src/models/deviceidstore.h
+        core/src/models/deviceidstore.cpp
+    )
+
+    target_link_libraries(deviceidstore_test
+        PRIVATE
+            Qt6::Test
+    )
+
+    add_test(NAME deviceidstore_test COMMAND deviceidstore_test)
 
     qt_add_executable(realtimecontroller_test
         core/tests/realtimecontroller_test.cpp

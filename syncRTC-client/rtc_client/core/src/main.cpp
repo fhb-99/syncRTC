@@ -8,11 +8,18 @@
 #include "controllers/auth/AuthController.h"
 #include "controllers/meeting/realtimecontroller.h"
 #include "models/currentuserstate.h"
+#include "models/deviceidstore.h"
 #include "models/global.h"
 
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
+
+    QSettings deviceSettings(QSettings::IniFormat,
+                             QSettings::UserScope,
+                             QStringLiteral("SyncRTC"),
+                             QStringLiteral("rtc_client"));
+    DeviceIdStore::loadOrCreate(deviceSettings);
 
     const QString dir = QDir::currentPath();
     QDir configDir(dir);
