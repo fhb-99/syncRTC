@@ -11,6 +11,7 @@
 #include <atomic>
 #include <queue>
 #include <condition_variable>
+#include <vector>
 
 #include <mysql/mysql.h>
 #include <mysql/mysql_time.h>
@@ -126,6 +127,8 @@ public:
 	bool UpdatePwd(const std::string& email, const std::string& newpwd);
 
     bool GetUserInfo(const std::string& email, UserInfo& user);
+
+    bool GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meetings);
 
 private:
     friend class Singleton<MysqlMgr>;

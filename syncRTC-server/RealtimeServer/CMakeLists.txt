@@ -151,4 +151,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(logic_system_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
     add_test(NAME logic_system_test COMMAND logic_system_test)
+
+    add_executable(meeting_info_test
+        tests/MeetingInfoTest.cpp
+    )
+    target_include_directories(meeting_info_test
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_compile_options(meeting_info_test
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    target_link_libraries(meeting_info_test PRIVATE MySQL::ConnectorCpp)
+    add_test(NAME meeting_info_test COMMAND meeting_info_test)
 endif()

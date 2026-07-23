@@ -203,3 +203,71 @@ bool MysqlMgr::GetUserInfo(const std::string& email, UserInfo& user)
 		return false;
     }
 }
+
+
+
+bool MysqlMgr::GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meetings)
+{
+    // 每次查询前先清空，查询为空时客户端即可按空列表处理。
+    meetings.clear();
+
+    if (!pool_ || uid <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT m.meeting_code, m.title, m.status, "
+            "m.scheduled_at, m.max_participants, "
+            "m.meeting_password_hash IS NOT NULL AS requires_password, "
+            "u.display_name AS host_display_name, "
+            "u.avatar_url AS host_avatar_url "
+            "FROM meeting_participants AS mp "
+            "JOIN meetings AS m ON m.id = mp.meeting_id "
+            "JOIN users AS u ON u.id = m.host_user_id "
+            "WHERE mp.user_id = ? "
+            "AND mp.participation_status = 0 "
+            "AND m.status = 0 "
+            "ORDER BY m.scheduled_at ASC, m.created_at DESC "
+            "LIMIT 5"
+        ));
+
+        pstmt->setInt(1, uid);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        while (res->next()) {
+            RecentMeetingInfo meeting;
+            meeting.meeting_code = res->getString("meeting_code").asStdString();
+            meeting.title = res->getString("title").asStdString();
+            meeting.host_display_name = res->getString("host_display_name").asStdString();
+            if (!res->isNull("host_avatar_url")) {
+                meeting.host_avatar_url = res->getString("host_avatar_url").asStdString();
+            }
+            meeting.status = static_cast<MeetingStatus>(res->getUInt("status"));
+            meeting.requires_password = res->getBoolean("requires_password");
+            meeting.max_participants = static_cast<std::uint16_t>(
+                res->getUInt("max_participants"));
+            if (!res->isNull("scheduled_at")) {
+                meeting.scheduled_at = res->getString("scheduled_at").asStdString();
+            }
+            meetings.push_back(std::move(meeting));
+        }
+
+        return true;
+    }
+    catch (const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}

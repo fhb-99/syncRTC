@@ -130,7 +130,28 @@ void LogicSystem::LoginHandler(std::shared_ptr<Session> session, std::uint16_t&,
     res["email"] = user_info.email;
     res["username"] = user_info.username;
 
-    // 后续还要查询会议表，来返回给客户端展示界面的数据 TODO
+    // 后续还要查询会议参与表，来返回给客户端展示界面的数据
+    std::vector<RecentMeetingInfo> meetings;
+    bool is_recent = MysqlMgr::GetInstance()->GetMeetingRecently(user_id, meetings);
+    if(!is_recent) {
+        res["error"] = ErrorCodes::ERROR_MYSQL;
+        return;
+    }
 
+    // 将会议列表逐条转换为 JSON，便于 Qt 客户端直接解析。
+    Json::Value meeting_list(Json::arrayValue);
+    for (const auto& meeting : meetings) {
+        Json::Value meeting_json;
+        meeting_json["meeting_code"] = meeting.meeting_code;
+        meeting_json["title"] = meeting.title;
+        meeting_json["host_display_name"] = meeting.host_display_name;
+        meeting_json["host_avatar_url"] = meeting.host_avatar_url;
+        meeting_json["status"] = static_cast<Json::UInt>(meeting.status);
+        meeting_json["requires_password"] = meeting.requires_password;
+        meeting_json["max_participants"] = meeting.max_participants;
+        meeting_json["scheduled_at"] = meeting.scheduled_at;
+        meeting_list.append(std::move(meeting_json));
+    }
+    res["meetings"] = std::move(meeting_list);
     res["error"] = ErrorCodes::SUCCESS;
 }
