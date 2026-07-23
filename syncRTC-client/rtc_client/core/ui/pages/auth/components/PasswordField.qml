@@ -6,7 +6,7 @@ Item {
 
     property alias text: input.text
     property string placeholderText: ""
-    property bool passwordVisible: true
+    property bool passwordVisible: false
     property bool hasError: false
 
     property url eyeSource: "qrc:/asserts/eye.svg"

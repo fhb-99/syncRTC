@@ -47,4 +47,6 @@ private:
 
 inline QString GateServer_URL = "";
 
+
+
 #endif // GLOBAL_H

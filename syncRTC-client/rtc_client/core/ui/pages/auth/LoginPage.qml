@@ -77,7 +77,7 @@ Item {
 
         function onLoginFailed(error) {
             root.loginPending = false
-            root.showNotice("TCP 登录失败，错误码：" + error, true)
+            root.showNotice("登录失败，错误码：" + error, true)
         }
     }
 
@@ -133,7 +133,7 @@ Item {
 
                 Text {
                     width: 390
-                    text: "支持会议房间、实时聊天、音视频通话、实时字幕、会议纪要和待办事项提取。"
+                    text: "支持会议房间、实时聊天、音视频通话、实时字幕、会议纪要和待办事项提议"
                     color: "#64748b"
                     font.pixelSize: 16
                     wrapMode: Text.WordWrap

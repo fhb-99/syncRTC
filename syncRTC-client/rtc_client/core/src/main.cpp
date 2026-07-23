@@ -59,6 +59,7 @@ int main(int argc, char *argv[])
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);
+    engine.rootContext()->setContextProperty("meetingController", realtimeController.meetingController());
 
     QObject::connect(
         &engine,

@@ -247,7 +247,8 @@ Item {
                 currentIndex: root.sectionIndex()
 
                 MeetingHomePage {
-                    meetings: meetingModel
+                    // 最近会议由 C++ MeetingController 提供，模型重置会自动刷新 ListView。
+                    meetings: meetingController
                     onJoinMeetingRequested: function(meetingId) {
                         root.showToast("会议号 " + meetingId + " 已通过校验，正在准备加入会议")
                     }
@@ -257,7 +258,7 @@ Item {
                 }
 
                 MeetingHistoryPage {
-                    meetings: meetingModel
+                    meetings: meetingController
                 }
 
                 ContactsPage {

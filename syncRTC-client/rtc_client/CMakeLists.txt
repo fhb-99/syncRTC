@@ -61,6 +61,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
         SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
+        SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -181,6 +182,8 @@ if(BUILD_TESTING)
         core/src/network/tcpmgr.cpp
         core/src/controllers/meeting/profilecontroller.h
         core/src/controllers/meeting/profilecontroller.cpp
+        core/src/controllers/meeting/meetingcontroller.h
+        core/src/controllers/meeting/meetingcontroller.cpp
         core/src/controllers/meeting/realtimecontroller.h
         core/src/controllers/meeting/realtimecontroller.cpp
     )
@@ -192,6 +195,19 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME realtimecontroller_test COMMAND realtimecontroller_test)
+
+    qt_add_executable(meetingcontroller_test
+        core/tests/meetingcontroller_test.cpp
+        core/src/controllers/meeting/meetingcontroller.h
+        core/src/controllers/meeting/meetingcontroller.cpp
+    )
+
+    target_link_libraries(meetingcontroller_test
+        PRIVATE
+            Qt6::Test
+    )
+
+    add_test(NAME meetingcontroller_test COMMAND meetingcontroller_test)
 endif()
 
 include(GNUInstallDirs)

@@ -144,19 +144,23 @@ Item {
                         font.bold: true
                     }
 
-                    ListView {
-                        id: recentMeetingList
-
+                    Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        clip: true
-                        model: root.meetings
-                        spacing: 10
-                        ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AsNeeded
-                        }
 
-                        delegate: Rectangle {
+                        ListView {
+                            id: recentMeetingList
+
+                            anchors.fill: parent
+                            clip: true
+                            model: root.meetings
+                            spacing: 10
+                            visible: !emptyRecentMeetings.visible
+                            ScrollBar.vertical: ScrollBar {
+                                policy: ScrollBar.AsNeeded
+                            }
+
+                            delegate: Rectangle {
                             required property string title
                             required property string meetingId
                             required property string schedule
@@ -234,6 +238,33 @@ Item {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: root.joinMeetingRequested(meetingId)
                                 }
+                            }
+                            }
+                        }
+
+                        // 仅在服务端已返回且列表为空时显示，避免请求中的空白状态被误判为无会议。
+                        Column {
+                            id: emptyRecentMeetings
+
+                            anchors.centerIn: parent
+                            spacing: 8
+                            visible: root.meetings
+                                     && root.meetings.recentMeetingsLoaded
+                                     && root.meetings.count === 0
+
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "暂无会议信息"
+                                color: "#475569"
+                                font.pixelSize: 16
+                                font.bold: true
+                            }
+
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: "新的会议安排会显示在这里"
+                                color: "#94a3b8"
+                                font.pixelSize: 13
                             }
                         }
                     }

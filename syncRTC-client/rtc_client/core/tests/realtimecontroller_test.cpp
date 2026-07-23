@@ -18,10 +18,20 @@ private slots:
         response["error"] = ErrorCodes::SUCCESS;
         response["username"] = "测试用户";
         response["email"] = "tester@example.com";
+        response["meetings"] = QJsonArray{
+            QJsonObject{
+                {"meeting_id", "100001"},
+                {"title", "媒体转发服务评审"},
+                {"schedule", "今天 14:00"},
+                {"participant_count", 4},
+                {"status", "in_progress"},
+            },
+        };
         realtimeController.slot_message_recv(AUTH_LOGIN_RESPONSE, response);
 
         QCOMPARE(currentUser.username(), QStringLiteral("测试用户"));
         QCOMPARE(currentUser.email(), QStringLiteral("tester@example.com"));
+        QCOMPARE(realtimeController.meetingController()->rowCount(), 1);
         QCOMPARE(profileReadySpy.count(), 1);
     }
 
