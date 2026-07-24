@@ -89,10 +89,21 @@ private slots:
         QCOMPARE(realtimeController.meetingController()->rowCount(), 0);
     }
 
-    void historyMeetingResponseRefreshesMeetingModel()
+    void historyMeetingResponseKeepsRecentMeetingsIntact()
     {
         CurrentUserState currentUser;
         RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+
+        QVERIFY(meetingController->applyRecentMeeting(QJsonArray{
+            QJsonObject{
+                {"meeting_code", "100001"},
+                {"title", "首页最近会议"},
+                {"schedule", "今天 14:00"},
+                {"participant_count", 4},
+                {"status", "in_progress"},
+            },
+        }));
 
         const QJsonObject response{
             {"error", ErrorCodes::SUCCESS},
@@ -104,17 +115,30 @@ private slots:
                     {"participant_count", 3},
                     {"status", "ended"},
                 },
+                QJsonObject{
+                    {"meeting_code", "300002"},
+                    {"title", "项目周会"},
+                    {"schedule", "三天前 10:00"},
+                    {"participant_count", 5},
+                    {"status", "ended"},
+                },
             }},
         };
 
         realtimeController.slot_message_recv(ID_PAST_MEETING_RESPONSE, response);
 
-        QCOMPARE(realtimeController.meetingController()->rowCount(), 1);
-        const QModelIndex first = realtimeController.meetingController()->index(0, 0);
-        QCOMPARE(realtimeController.meetingController()
-                     ->data(first, MeetingController::MeetingIdRole)
+        QCOMPARE(meetingController->rowCount(), 1);
+        const QModelIndex first = meetingController->index(0, 0);
+        QCOMPARE(meetingController->data(first, MeetingController::MeetingIdRole)
                      .toString(),
+                 QStringLiteral("100001"));
+        QCOMPARE(meetingController->historyMeetings().size(), 2);
+        QCOMPARE(meetingController->historyMeetings().first().toMap()
+                     .value("meetingId").toString(),
                  QStringLiteral("300001"));
+        QCOMPARE(meetingController->historyMeetings().at(1).toMap()
+                     .value("meetingId").toString(),
+                 QStringLiteral("300002"));
     }
 };
 

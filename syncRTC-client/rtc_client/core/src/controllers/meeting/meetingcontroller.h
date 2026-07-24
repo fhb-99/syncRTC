@@ -3,6 +3,8 @@
 
 #include <QAbstractListModel>
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QVariant>
 
 class MeetingController : public QAbstractListModel
 {
@@ -11,6 +13,8 @@ class MeetingController : public QAbstractListModel
     Q_PROPERTY(int count READ count NOTIFY recentMeetingsChanged)
     // 区分“尚未收到服务端结果”和“服务端明确返回空列表”，供 QML 显示空状态。
     Q_PROPERTY(bool recentMeetingsLoaded READ recentMeetingsLoaded NOTIFY recentMeetingsChanged)
+    // 历史会议仅供历史页读取，不能复用首页的最近会议模型。
+    Q_PROPERTY(QVariantList historyMeetings READ historyMeetings NOTIFY historyMeetingsChanged)
 
 public:
     enum Role {
@@ -30,8 +34,9 @@ public:
     QHash<int, QByteArray> roleNames() const override;
     int count() const;
     bool recentMeetingsLoaded() const;
+    QVariantList historyMeetings() const;
 
-    // QML 表单校验通过后调用；网络层只需连接下方信号即可发送请求。
+    // QML 表单校验通过后调用，由控制器直接交给 TcpMgr 发送请求。
     Q_INVOKABLE void requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                           const QString &password);
     // 进入历史会议页时调用，向服务端查询当前用户参与过的会议。
@@ -41,11 +46,12 @@ public:
 
     // 将服务端 recent meetings JSON 原子替换为 QML 可读模型数据
     bool applyRecentMeeting(const QJsonArray &json);
+    // 保持服务端返回顺序，历史页直接展示这份独立数据。
+    bool applyHistoryMeetings(const QJsonArray &json);
 
 signals:
-    // 便于后续同步加载状态或记录用户操作。
-    void historyMeetingsRequested();
     void recentMeetingsChanged();
+    void historyMeetingsChanged();
 
 private:
     struct MeetingItem {
@@ -57,8 +63,12 @@ private:
         QString statusColor;
     };
 
+    // 最近会议和历史会议复用同一份服务端字段解析规则。
+    static bool parseMeetingItem(const QJsonObject &object, MeetingItem *item);
+
     QVector<MeetingItem> m_recentMeetings;
     bool m_recentMeetingsLoaded = false;
+    QVariantList m_historyMeetings;
 };
 
 #endif // MEETINGCONTROLLER_H

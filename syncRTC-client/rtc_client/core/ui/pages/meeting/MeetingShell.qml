@@ -271,7 +271,7 @@ Item {
                 }
 
                 MeetingHistoryPage {
-                    meetings: meetingController
+                    meetings: meetingController.historyMeetings
                 }
 
                 ContactsPage {

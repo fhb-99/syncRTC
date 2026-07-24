@@ -64,6 +64,11 @@ bool MeetingController::recentMeetingsLoaded() const
     return m_recentMeetingsLoaded;
 }
 
+QVariantList MeetingController::historyMeetings() const
+{
+    return m_historyMeetings;
+}
+
 void MeetingController::requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                              const QString &password)
 {
@@ -80,9 +85,6 @@ void MeetingController::requestCreateMeeting(const QString &title, const QString
 
 void MeetingController::requestHistoryMeetings()
 {
-    // 先通知业务层，后续可复用该信号更新加载状态或埋点。
-    emit historyMeetingsRequested();
-
     QJsonObject request;
 
     TcpMgr::GetInstance()->slot_send_data(
@@ -100,6 +102,61 @@ bool MeetingController::copyMeetingCode(const QString &meetingCode)
     return true;
 }
 
+bool MeetingController::parseMeetingItem(const QJsonObject &object, MeetingItem *item)
+{
+    if (item == nullptr) {
+        return false;
+    }
+
+    MeetingItem parsed;
+    parsed.meetingId = object.value("meeting_id").toVariant().toString().trimmed();
+    if (parsed.meetingId.isEmpty()) {
+        parsed.meetingId = object.value("meeting_code").toString().trimmed();
+    }
+    parsed.title = object.value("title").toString().trimmed();
+    if (parsed.meetingId.isEmpty() || parsed.title.isEmpty()) {
+        return false;
+    }
+
+    parsed.schedule = object.value("schedule").toString().trimmed();
+    if (parsed.schedule.isEmpty()) {
+        parsed.schedule = object.value("scheduled_at").toString().trimmed();
+    }
+    if (parsed.schedule.isEmpty()) {
+        parsed.schedule = object.value("start_time").toString().trimmed();
+    }
+    if (parsed.schedule.isEmpty()) {
+        parsed.schedule = QStringLiteral("时间待定");
+    }
+
+    const QJsonValue participantValue = object.value("participant_count");
+    const int participantCount = participantValue.isString()
+        ? participantValue.toString().toInt()
+        : participantValue.toInt();
+    parsed.participants = QStringLiteral("%1 人").arg(qMax(0, participantCount));
+
+    const QJsonValue statusValue = object.value("status");
+    const QString statusCode = statusValue.isString()
+        ? statusValue.toString().toLower()
+        : QString::number(statusValue.toInt());
+    if (statusCode == "in_progress" || statusCode == "1") {
+        parsed.status = QStringLiteral("进行中");
+        parsed.statusColor = QStringLiteral("#16a34a");
+    } else if (statusCode == "scheduled" || statusCode == "0") {
+        parsed.status = QStringLiteral("已预约");
+        parsed.statusColor = QStringLiteral("#2563eb");
+    } else if (statusCode == "cancelled" || statusCode == "3") {
+        parsed.status = QStringLiteral("已取消");
+        parsed.statusColor = QStringLiteral("#ef4444");
+    } else {
+        parsed.status = QStringLiteral("已结束");
+        parsed.statusColor = QStringLiteral("#64748b");
+    }
+
+    *item = std::move(parsed);
+    return true;
+}
+
 bool MeetingController::applyRecentMeeting(const QJsonArray &json)
 {
     QVector<MeetingItem> updatedMeetings;
@@ -110,53 +167,11 @@ bool MeetingController::applyRecentMeeting(const QJsonArray &json)
             return false;
         }
 
-        const QJsonObject object = value.toObject();
         MeetingItem item;
-        item.meetingId = object.value("meeting_id").toVariant().toString().trimmed();
-        if (item.meetingId.isEmpty()) {
-            item.meetingId = object.value("meeting_code").toString().trimmed();
-        }
-        item.title = object.value("title").toString().trimmed();
-        if (item.meetingId.isEmpty() || item.title.isEmpty()) {
+        if (!parseMeetingItem(value.toObject(), &item)) {
             return false;
         }
-
-        item.schedule = object.value("schedule").toString().trimmed();
-        if (item.schedule.isEmpty()) {
-            item.schedule = object.value("scheduled_at").toString().trimmed();
-        }
-        if (item.schedule.isEmpty()) {
-            item.schedule = object.value("start_time").toString().trimmed();
-        }
-        if (item.schedule.isEmpty()) {
-            item.schedule = QStringLiteral("时间待定");
-        }
-
-        const QJsonValue participantValue = object.value("participant_count");
-        const int participantCount = participantValue.isString()
-            ? participantValue.toString().toInt()
-            : participantValue.toInt();
-        item.participants = QStringLiteral("%1 人").arg(qMax(0, participantCount));
-
-        const QJsonValue statusValue = object.value("status");
-        const QString statusCode = statusValue.isString()
-            ? statusValue.toString().toLower()
-            : QString::number(statusValue.toInt());
-        if (statusCode == "in_progress" || statusCode == "1") {
-            item.status = QStringLiteral("进行中");
-            item.statusColor = QStringLiteral("#16a34a");
-        } else if (statusCode == "scheduled" || statusCode == "0") {
-            item.status = QStringLiteral("已预约");
-            item.statusColor = QStringLiteral("#2563eb");
-        } else if (statusCode == "cancelled" || statusCode == "3") {
-            item.status = QStringLiteral("已取消");
-            item.statusColor = QStringLiteral("#ef4444");
-        } else {
-            item.status = QStringLiteral("已结束");
-            item.statusColor = QStringLiteral("#64748b");
-        }
-
-        updatedMeetings.append(item);
+        updatedMeetings.append(std::move(item));
     }
 
     beginResetModel();
@@ -165,5 +180,36 @@ bool MeetingController::applyRecentMeeting(const QJsonArray &json)
     m_recentMeetingsLoaded = true;
     endResetModel();
     emit recentMeetingsChanged();
+    return true;
+}
+
+bool MeetingController::applyHistoryMeetings(const QJsonArray &json)
+{
+    QVariantList updatedMeetings;
+    updatedMeetings.reserve(json.size());
+
+    for (const QJsonValue &value : json) {
+        if (!value.isObject()) {
+            return false;
+        }
+
+        MeetingItem item;
+        if (!parseMeetingItem(value.toObject(), &item)) {
+            return false;
+        }
+
+        // QVariantMap 可直接作为 QML ListView 的 modelData 读取。
+        updatedMeetings.append(QVariantMap{
+            {"meetingId", item.meetingId},
+            {"title", item.title},
+            {"schedule", item.schedule},
+            {"participants", item.participants},
+            {"status", item.status},
+            {"statusColor", item.statusColor},
+        });
+    }
+
+    m_historyMeetings = std::move(updatedMeetings);
+    emit historyMeetingsChanged();
     return true;
 }

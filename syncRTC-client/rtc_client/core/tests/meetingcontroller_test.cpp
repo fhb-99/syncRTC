@@ -58,16 +58,6 @@ private slots:
         QVERIFY(!meetingController.copyMeetingCode(QStringLiteral("   ")));
     }
 
-    void historyMeetingRequestIsEmitted()
-    {
-        MeetingController meetingController;
-        QSignalSpy requestSpy(&meetingController, &MeetingController::historyMeetingsRequested);
-
-        meetingController.requestHistoryMeetings();
-
-        QCOMPARE(requestSpy.count(), 1);
-    }
-
 };
 
 QTEST_GUILESS_MAIN(MeetingControllerTest)

@@ -40,12 +40,7 @@ Item {
             spacing: 12
 
             delegate: Rectangle {
-                required property string title
-                required property string schedule
-                required property string participants
-                required property string status
-                required property color statusColor
-                required property string summary
+                required property var modelData
 
                 width: historyList.width
                 height: 118
@@ -62,7 +57,7 @@ Item {
                         Layout.preferredWidth: 10
                         Layout.fillHeight: true
                         radius: 5
-                        color: statusColor
+                        color: modelData.statusColor
                     }
 
                     ColumnLayout {
@@ -71,7 +66,7 @@ Item {
 
                         Text {
                             Layout.fillWidth: true
-                            text: title
+                            text: modelData.title
                             color: "#0f172a"
                             font.pixelSize: 18
                             font.bold: true
@@ -79,24 +74,18 @@ Item {
                         }
 
                         Text {
-                            Layout.fillWidth: true
-                            text: summary
-                            color: "#64748b"
-                            font.pixelSize: 14
-                            elide: Text.ElideRight
-                        }
-
-                        Text {
-                            text: schedule + " · " + participants
+                            text: "会议号 " + modelData.meetingId + " · "
+                                  + modelData.schedule + " · " + modelData.participants
                             color: "#94a3b8"
                             font.pixelSize: 13
+                            elide: Text.ElideRight
                         }
                     }
 
                     Text {
                         Layout.alignment: Qt.AlignVCenter
-                        text: status
-                        color: statusColor
+                        text: modelData.status
+                        color: modelData.statusColor
                         font.pixelSize: 14
                         font.bold: true
                     }

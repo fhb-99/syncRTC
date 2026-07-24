@@ -68,7 +68,7 @@ void RealtimeController::initHandlers()
         }
 
         const QJsonValue meetingsValue = json.value("meetings");
-        if (!meetingsValue.isArray() || !m_meeting->applyRecentMeeting(meetingsValue.toArray())) {
+        if (!meetingsValue.isArray() || !m_meeting->applyHistoryMeetings(meetingsValue.toArray())) {
             qWarning() << "Invalid history meetings response";
         }
     });
