@@ -16,6 +16,7 @@ constexpr std::size_t kFrameHeaderLength = sizeof(std::uint16_t) * 2;
 
 Session::Session(int fd)
     : m_fd(fd),
+      m_user_id(0),
       m_send_offset(0)
 {
 }
@@ -23,6 +24,16 @@ Session::Session(int fd)
 int Session::GetFd() const
 {
     return m_fd;
+}
+
+void Session::SetUserId(int user_id)
+{
+    m_user_id = user_id;
+}
+
+int Session::GetUserId() const
+{
+    return m_user_id;
 }
 
 bool Session::HandleRead()

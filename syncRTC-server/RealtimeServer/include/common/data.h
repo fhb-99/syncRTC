@@ -46,9 +46,6 @@ struct MeetingInfo
     // meetings.creator_user_id：创建这场会议的用户 ID，用于审计和创建者权限判断。
     std::uint64_t creator_user_id = 0;
 
-    // meetings.host_user_id：当前主持人用户 ID，用于控制结束会议、成员管理和设备管理等主持权限。
-    std::uint64_t host_user_id = 0;
-
     // meetings.status：会议所处的持久化生命周期，不承载 Redis 中瞬时的成员在线变化。
     MeetingStatus status = MeetingStatus::kScheduled;
 
@@ -77,16 +74,36 @@ struct MeetingInfo
     MeetingTimePoint updated_at{};
 };
 
+// 创建会议时由业务层传给存储层的最小数据，不接受客户端指定创建者或主持人。
+struct CreateMeetingInfo
+{
+    int user_id = 0;
+    std::string title;
+    std::string scheduled_at;
+    std::string password_hash;
+};
 
 
 struct RecentMeetingInfo
 {
     std::string meeting_code;       // 用户复制或输入的会议号
     std::string title;              // 会议标题
-    std::string host_display_name; // 主持人名称
-    std::string host_avatar_url;   // 主持人头像
+    std::string creator_display_name; // 创建者名称
+    std::string creator_avatar_url;   // 创建者头像
     MeetingStatus status;          // 未开始、进行中、已结束等
     bool requires_password;        // 是否需要输入会议密码
     std::uint16_t max_participants;// 人数上限
     std::string scheduled_at;      // 格式化后的预约开始时间
+};
+
+
+struct HistoryMeetingInfo
+{
+    std::string meeting_code;       // 用户复制或输入的会议号
+    std::string title;              // 会议标题
+    std::string creator_display_name; // 创建者名称
+    std::string creator_avatar_url;   // 创建者头像
+    std::string started_at;         // 会议正式开始时间，一般就是预约开始时间
+    std::string ended_at;           // 会议结束时间
+    // 会议记录，ai记录之类的，TODO
 };

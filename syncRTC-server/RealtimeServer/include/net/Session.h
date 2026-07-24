@@ -22,6 +22,10 @@ public:
 
     int GetFd() const;
 
+    // TCP 登录校验成功后保存用户 ID，后续会议请求不再信任客户端传来的身份。
+    void SetUserId(int user_id);
+    int GetUserId() const;
+
     // 读取并解析 Qt 客户端的 4 字节帧头，完整帧直接投递到 LogicSystem。
     bool HandleRead();
 
@@ -35,6 +39,8 @@ private:
 
     // fd 的关闭由 CServer 统一负责，Session 只使用它进行收发。
     int m_fd;
+    // 未登录连接保持为 0。
+    int m_user_id;
     // 半包会暂存在这里，直到凑齐一个完整帧。
     std::string m_receive_buffer;
     // 非阻塞 send 未发完的数据按顺序保留在队列中。

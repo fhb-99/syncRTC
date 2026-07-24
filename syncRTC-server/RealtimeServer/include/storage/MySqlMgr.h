@@ -130,6 +130,13 @@ public:
 
     bool GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meetings);
 
+    // 在同一事务内创建会议并登记创建者，成功后返回可直接展示的会议数据。
+    bool CreateMeeting(const CreateMeetingInfo& create_info,
+                       RecentMeetingInfo& meeting);
+
+    // 得到历史会议信息
+    bool GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings);
+
 private:
     friend class Singleton<MysqlMgr>;
     MysqlMgr();

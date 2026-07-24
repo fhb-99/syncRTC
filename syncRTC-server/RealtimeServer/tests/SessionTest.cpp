@@ -54,6 +54,14 @@ int main()
     }
 
     auto session = std::make_shared<Session>(sockets[0]);
+    if (!Expect(session->GetUserId() == 0, "新连接不应带有用户身份") ||
+        !Expect((session->SetUserId(42), session->GetUserId() == 42),
+                "登录后未保存用户身份")) {
+        ::close(sockets[0]);
+        ::close(sockets[1]);
+        return 1;
+    }
+
     const std::array<char, 7> frame = {
         static_cast<char>(0x03), static_cast<char>(0xE9),
         static_cast<char>(0x00), static_cast<char>(0x03),

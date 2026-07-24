@@ -42,6 +42,7 @@ add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(Threads REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
+find_library(CRYPT_LIBRARY NAMES crypt REQUIRED)
 
 # Redis++ 在当前环境中没有 CMake 包，显式补齐它与 hiredis 的依赖关系。
 find_package(PkgConfig REQUIRED)
@@ -79,6 +80,7 @@ set(REALTIME_LOGIC_LIBRARIES
     Boost::filesystem
     Boost::system
     JsonCpp::JsonCpp
+    ${CRYPT_LIBRARY}
     SyncRTC::RedisPlusPlus
     MySQL::ConnectorCpp
 )

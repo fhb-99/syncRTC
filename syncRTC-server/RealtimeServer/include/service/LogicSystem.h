@@ -44,6 +44,12 @@ private:
     // 客户端登录处理
     void LoginHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
+    // 客户端创建会议处理
+    void CreateMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+
+    // 得到客户端历史会议信息处理
+    void GetPastMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+
     bool m_stop;
     std::mutex m_mutex;
     std::condition_variable m_cond;
