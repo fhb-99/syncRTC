@@ -24,6 +24,7 @@ QVariant MeetingController::data(const QModelIndex &index, int role) const
     }
 
     const MeetingItem &item = m_recentMeetings.at(index.row());
+    // 将内部会议实体按角色暴露给首页 ListView，避免 QML 依赖 JSON 字段名。
     switch (role) {
     case MeetingIdRole:
         return item.meetingId;
@@ -109,15 +110,18 @@ bool MeetingController::parseMeetingItem(const QJsonObject &object, MeetingItem 
     }
 
     MeetingItem parsed;
+    // 服务端历史接口使用 meeting_code，部分接口仍使用 meeting_id，客户端兼容两种字段。
     parsed.meetingId = object.value("meeting_id").toVariant().toString().trimmed();
     if (parsed.meetingId.isEmpty()) {
         parsed.meetingId = object.value("meeting_code").toString().trimmed();
     }
+    // 会议号和主题是界面展示所必需的数据，缺失时拒绝整次更新，保留旧数据。
     parsed.title = object.value("title").toString().trimmed();
     if (parsed.meetingId.isEmpty() || parsed.title.isEmpty()) {
         return false;
     }
 
+    // 不同回包阶段的时间字段不同，按统一优先级转换为界面展示时间。
     parsed.schedule = object.value("schedule").toString().trimmed();
     if (parsed.schedule.isEmpty()) {
         parsed.schedule = object.value("scheduled_at").toString().trimmed();
@@ -129,12 +133,14 @@ bool MeetingController::parseMeetingItem(const QJsonObject &object, MeetingItem 
         parsed.schedule = QStringLiteral("时间待定");
     }
 
+    // participant_count 兼容数字和字符串，统一转换并限制为非负人数。
     const QJsonValue participantValue = object.value("participant_count");
     const int participantCount = participantValue.isString()
         ? participantValue.toString().toInt()
         : participantValue.toInt();
     parsed.participants = QStringLiteral("%1 人").arg(qMax(0, participantCount));
 
+    // 将协议状态码映射为中文文案和页面状态色，QML 不再承载业务判断。
     const QJsonValue statusValue = object.value("status");
     const QString statusCode = statusValue.isString()
         ? statusValue.toString().toLower()
@@ -174,11 +180,13 @@ bool MeetingController::applyRecentMeeting(const QJsonArray &json)
         updatedMeetings.append(std::move(item));
     }
 
+    // 所有记录校验通过后一次性替换首页模型，避免 QML 看到半更新的数据。
     beginResetModel();
     m_recentMeetings = std::move(updatedMeetings);
     // applyRecentMeeting 仅在完整 JSON 校验通过后调用到这里，表示已收到有效服务端结果
     m_recentMeetingsLoaded = true;
     endResetModel();
+    // 通知首页的空状态、会议数量和列表委托同步刷新。
     emit recentMeetingsChanged();
     return true;
 }
@@ -188,28 +196,41 @@ bool MeetingController::applyHistoryMeetings(const QJsonArray &json)
     QVariantList updatedMeetings;
     updatedMeetings.reserve(json.size());
 
+    // 服务端已按距离当前时间由近到远排序，客户端只转换字段，不再自行重新排序。
     for (const QJsonValue &value : json) {
         if (!value.isObject()) {
             return false;
         }
 
-        MeetingItem item;
-        if (!parseMeetingItem(value.toObject(), &item)) {
+        const QJsonObject object = value.toObject();
+        // 历史会议使用 HistoryMeetingInfo 协议，字段与首页最近会议不同，不能复用 parseMeetingItem。
+        const QString meetingCode = object.value("meeting_code").toString().trimmed();
+        const QString title = object.value("title").toString().trimmed();
+        if (meetingCode.isEmpty() || title.isEmpty()) {
             return false;
         }
 
+        // 创建者头像允许为空，QML 会在没有头像地址时展示默认头像。
+        const QString creatorName = object.value("creator_display_name").toString().trimmed();
+        const QString creatorAvatarUrl = object.value("creator_avatar_url").toString().trimmed();
+        // 历史会议应带有完整起止时间；缺失时保留明确的占位文案，避免界面出现空白。
+        const QString startedAt = object.value("started_at").toString().trimmed();
+        const QString endedAt = object.value("ended_at").toString().trimmed();
+
         // QVariantMap 可直接作为 QML ListView 的 modelData 读取。
         updatedMeetings.append(QVariantMap{
-            {"meetingId", item.meetingId},
-            {"title", item.title},
-            {"schedule", item.schedule},
-            {"participants", item.participants},
-            {"status", item.status},
-            {"statusColor", item.statusColor},
+            {"meetingCode", meetingCode},
+            {"title", title},
+            {"creatorName", creatorName.isEmpty() ? QStringLiteral("未知创建者") : creatorName},
+            {"creatorAvatarUrl", creatorAvatarUrl},
+            {"startedAt", startedAt.isEmpty() ? QStringLiteral("开始时间待定") : startedAt},
+            {"endedAt", endedAt.isEmpty() ? QStringLiteral("结束时间待定") : endedAt},
         });
     }
 
+    // 历史列表独立于最近会议模型，防止切换历史页后覆盖首页数据。
     m_historyMeetings = std::move(updatedMeetings);
+    // historyMeetings 属性变化后，历史页的 ListView 会重新绑定新列表。
     emit historyMeetingsChanged();
     return true;
 }

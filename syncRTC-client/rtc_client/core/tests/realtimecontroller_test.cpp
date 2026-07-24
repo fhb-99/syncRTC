@@ -111,16 +111,18 @@ private slots:
                 QJsonObject{
                     {"meeting_code", "300001"},
                     {"title", "客户端复盘会"},
-                    {"schedule", "昨天 16:00"},
-                    {"participant_count", 3},
-                    {"status", "ended"},
+                    {"creator_display_name", "张三"},
+                    {"creator_avatar_url", "https://example.com/avatar-1.png"},
+                    {"started_at", "2026-07-23 16:00"},
+                    {"ended_at", "2026-07-23 17:15"},
                 },
                 QJsonObject{
                     {"meeting_code", "300002"},
                     {"title", "项目周会"},
-                    {"schedule", "三天前 10:00"},
-                    {"participant_count", 5},
-                    {"status", "ended"},
+                    {"creator_display_name", "李四"},
+                    {"creator_avatar_url", ""},
+                    {"started_at", "2026-07-21 10:00"},
+                    {"ended_at", "2026-07-21 11:00"},
                 },
             }},
         };
@@ -133,11 +135,16 @@ private slots:
                      .toString(),
                  QStringLiteral("100001"));
         QCOMPARE(meetingController->historyMeetings().size(), 2);
-        QCOMPARE(meetingController->historyMeetings().first().toMap()
-                     .value("meetingId").toString(),
+        const QVariantMap firstHistory = meetingController->historyMeetings().first().toMap();
+        QCOMPARE(firstHistory.value("meetingCode").toString(),
                  QStringLiteral("300001"));
+        QCOMPARE(firstHistory.value("creatorName").toString(), QStringLiteral("张三"));
+        QCOMPARE(firstHistory.value("creatorAvatarUrl").toString(),
+                 QStringLiteral("https://example.com/avatar-1.png"));
+        QCOMPARE(firstHistory.value("startedAt").toString(), QStringLiteral("2026-07-23 16:00"));
+        QCOMPARE(firstHistory.value("endedAt").toString(), QStringLiteral("2026-07-23 17:15"));
         QCOMPARE(meetingController->historyMeetings().at(1).toMap()
-                     .value("meetingId").toString(),
+                     .value("meetingCode").toString(),
                  QStringLiteral("300002"));
     }
 };

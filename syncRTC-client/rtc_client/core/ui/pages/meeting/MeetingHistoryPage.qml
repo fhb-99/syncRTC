@@ -43,7 +43,7 @@ Item {
                 required property var modelData
 
                 width: historyList.width
-                height: 118
+                height: 128
                 radius: 8
                 color: "#ffffff"
                 border.color: "#e2e8f0"
@@ -54,10 +54,31 @@ Item {
                     spacing: 16
 
                     Rectangle {
-                        Layout.preferredWidth: 10
-                        Layout.fillHeight: true
-                        radius: 5
-                        color: modelData.statusColor
+                        Layout.preferredWidth: 44
+                        Layout.preferredHeight: 44
+                        Layout.alignment: Qt.AlignVCenter
+                        radius: width / 2
+                        color: "#dbeafe"
+                        clip: true
+
+                        Image {
+                            id: creatorAvatar
+
+                            anchors.fill: parent
+                            source: modelData.creatorAvatarUrl
+                            fillMode: Image.PreserveAspectCrop
+                            // URL 为空或加载失败时保留默认首字头像。
+                            visible: status === Image.Ready
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: !creatorAvatar.visible
+                            text: modelData.creatorName.charAt(0)
+                            color: "#2563eb"
+                            font.pixelSize: 18
+                            font.bold: true
+                        }
                     }
 
                     ColumnLayout {
@@ -74,8 +95,16 @@ Item {
                         }
 
                         Text {
-                            text: "会议号 " + modelData.meetingId + " · "
-                                  + modelData.schedule + " · " + modelData.participants
+                            Layout.fillWidth: true
+                            text: "创建者：" + modelData.creatorName
+                            color: "#64748b"
+                            font.pixelSize: 14
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.startedAt + " ～ " + modelData.endedAt
                             color: "#94a3b8"
                             font.pixelSize: 13
                             elide: Text.ElideRight
@@ -84,10 +113,11 @@ Item {
 
                     Text {
                         Layout.alignment: Qt.AlignVCenter
-                        text: modelData.status
-                        color: modelData.statusColor
-                        font.pixelSize: 14
+                        text: "会议号\n" + modelData.meetingCode
+                        color: "#2563eb"
+                        font.pixelSize: 13
                         font.bold: true
+                        horizontalAlignment: Text.AlignRight
                     }
                 }
             }
