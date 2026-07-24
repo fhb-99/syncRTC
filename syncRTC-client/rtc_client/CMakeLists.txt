@@ -34,6 +34,8 @@ qt_add_qml_module(apprtc_client
         core/ui/pages/auth/components/PrimaryButton.qml
         core/ui/pages/meeting/MeetingShell.qml
         core/ui/pages/meeting/MeetingHomePage.qml
+        core/ui/pages/meeting/CreateMeetingDialog.qml
+        core/ui/pages/meeting/MeetingTimePickerPopup.qml
         core/ui/pages/meeting/MeetingHistoryPage.qml
         core/ui/pages/meeting/ContactsPage.qml
         core/ui/pages/meeting/AiAssistantPage.qml
@@ -191,6 +193,7 @@ if(BUILD_TESTING)
     target_link_libraries(realtimecontroller_test
         PRIVATE
             Qt6::Test
+            Qt6::Gui
             Qt6::Network
     )
 
@@ -200,11 +203,18 @@ if(BUILD_TESTING)
         core/tests/meetingcontroller_test.cpp
         core/src/controllers/meeting/meetingcontroller.h
         core/src/controllers/meeting/meetingcontroller.cpp
+        core/src/models/Data.h
+        core/src/models/Singleton.h
+        core/src/models/global.h
+        core/src/network/tcpmgr.h
+        core/src/network/tcpmgr.cpp
     )
 
     target_link_libraries(meetingcontroller_test
         PRIVATE
             Qt6::Test
+            Qt6::Gui
+            Qt6::Network
     )
 
     add_test(NAME meetingcontroller_test COMMAND meetingcontroller_test)

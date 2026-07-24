@@ -171,7 +171,12 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.currentSection = key
+                            onClicked: {
+                                // 仅在切换进入历史页时通知 C++，避免重复点击产生无效请求。
+                                if (key === "history" && root.currentSection !== "history")
+                                    meetingController.requestHistoryMeetings()
+                                root.currentSection = key
+                            }
                         }
                     }
                 }
@@ -251,6 +256,14 @@ Item {
                     meetings: meetingController
                     onJoinMeetingRequested: function(meetingId) {
                         root.showToast("会议号 " + meetingId + " 已通过校验，正在准备加入会议")
+                    }
+                    // 表单校验交给弹窗，QML 不直接伪造创建成功或修改会议列表。
+                    onCreateMeetingRequested: function(title, scheduledAt, password) {
+                        meetingController.requestCreateMeeting(title, scheduledAt, password)
+                    }
+                    onMeetingCodeCopyRequested: function(meetingCode) {
+                        if (meetingController.copyMeetingCode(meetingCode))
+                            root.showToast("会议号 " + meetingCode + " 已复制")
                     }
                     onActionRequested: function(action) {
                         root.showToast(action + "功能开发中")

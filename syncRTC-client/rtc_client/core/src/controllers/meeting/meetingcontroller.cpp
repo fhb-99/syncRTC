@@ -1,6 +1,11 @@
 #include "meetingcontroller.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QJsonDocument>
 #include <QJsonObject>
+
+#include "../../network/tcpmgr.h"
 
 MeetingController::MeetingController(QObject *parent)
     : QAbstractListModel(parent)
@@ -57,6 +62,42 @@ int MeetingController::count() const
 bool MeetingController::recentMeetingsLoaded() const
 {
     return m_recentMeetingsLoaded;
+}
+
+void MeetingController::requestCreateMeeting(const QString &title, const QString &scheduledAt,
+                                             const QString &password)
+{
+    QJsonObject request;
+    request["title"] = title;
+    // 空值表示立即开始；非空值由 QML 时间选择器生成
+    request["scheduled_at"] = scheduledAt;
+    // 空值表示默认不加密，服务端应只保存密码哈希
+    request["password"] = password;
+
+    TcpMgr::GetInstance()->slot_send_data(
+        ID_CREATE_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+void MeetingController::requestHistoryMeetings()
+{
+    // 先通知业务层，后续可复用该信号更新加载状态或埋点。
+    emit historyMeetingsRequested();
+
+    QJsonObject request;
+
+    TcpMgr::GetInstance()->slot_send_data(
+        ID_PAST_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+bool MeetingController::copyMeetingCode(const QString &meetingCode)
+{
+    const QString code = meetingCode.trimmed();
+    if (code.isEmpty()) {
+        return false;
+    }
+
+    QGuiApplication::clipboard()->setText(code);
+    return true;
 }
 
 bool MeetingController::applyRecentMeeting(const QJsonArray &json)
@@ -120,7 +161,7 @@ bool MeetingController::applyRecentMeeting(const QJsonArray &json)
 
     beginResetModel();
     m_recentMeetings = std::move(updatedMeetings);
-    // applyRecentMeeting 仅在完整 JSON 校验通过后调用到这里，表示已收到有效服务端结果。
+    // applyRecentMeeting 仅在完整 JSON 校验通过后调用到这里，表示已收到有效服务端结果
     m_recentMeetingsLoaded = true;
     endResetModel();
     emit recentMeetingsChanged();

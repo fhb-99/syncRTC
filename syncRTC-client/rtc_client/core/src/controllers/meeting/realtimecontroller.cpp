@@ -41,8 +41,36 @@ void RealtimeController::initHandlers()
             return;
         }
 
-        // 两类初始化数据均写入状态后，再通知 QML 进入会议主界面。
+        // 两类初始化数据均写入状态后，再通知 QML 进入主界面
         emit profileReady();
+    });
+
+    // 创建成功后服务返回最新 meetings 列表，交给控制器刷新 QML 模型
+    m_handlers.insert(ID_CREATE_MEETING_RESPONSE, [this](const QJsonObject &json) {
+        const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+        if (error != ErrorCodes::SUCCESS) {
+            qWarning() << "Create meeting failed, error:" << error;
+            return;
+        }
+
+        const QJsonValue meetingsValue = json.value("meetings");
+        if (!meetingsValue.isArray() || !m_meeting->applyRecentMeeting(meetingsValue.toArray())) {
+            qWarning() << "Invalid create meeting response";
+        }
+    });
+
+    // 历史会议由服务端按距离当前时间由近到远排序，客户端保持服务端顺序展示。
+    m_handlers.insert(ID_PAST_MEETING_RESPONSE, [this](const QJsonObject &json) {
+        const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+        if (error != ErrorCodes::SUCCESS) {
+            qWarning() << "Load history meetings failed, error:" << error;
+            return;
+        }
+
+        const QJsonValue meetingsValue = json.value("meetings");
+        if (!meetingsValue.isArray() || !m_meeting->applyRecentMeeting(meetingsValue.toArray())) {
+            qWarning() << "Invalid history meetings response";
+        }
     });
 }
 

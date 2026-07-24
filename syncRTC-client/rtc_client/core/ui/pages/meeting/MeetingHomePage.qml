@@ -10,6 +10,8 @@ Item {
     property string joinError: ""
 
     signal joinMeetingRequested(string meetingId)
+    signal createMeetingRequested(string title, string scheduledAt, string password)
+    signal meetingCodeCopyRequested(string meetingCode)
     signal actionRequested(string action)
 
     function greeting() {
@@ -28,7 +30,15 @@ Item {
             root.joinMeetingRequested(meetingId)
     }
 
-    // 首页使用固定工作台布局，只有“最近会议”列表允许在自身区域内滚动。
+    CreateMeetingDialog {
+        id: createMeetingDialog
+
+        onMeetingCreationRequested: function(title, scheduledAt, password) {
+            root.createMeetingRequested(title, scheduledAt, password)
+        }
+    }
+
+    // 首页使用固定工作台布局，只有“最近会议”列表允许在自身区域内滚动
     ColumnLayout {
         anchors.fill: parent
         anchors.leftMargin: 48
@@ -63,9 +73,8 @@ Item {
 
             Repeater {
                 model: [
-                    { "title": "发起会议", "subtitle": "立即创建一个新的房间", "color": "#2563eb" },
-                    { "title": "加入会议", "subtitle": "输入会议号快速入会", "color": "#0ea5e9" },
-                    { "title": "预约会议", "subtitle": "稍后开始并通知成员", "color": "#10b981" }
+                    { "title": "创建会议", "subtitle": "立即开始或定时安排", "color": "#2563eb" },
+                    { "title": "加入会议", "subtitle": "输入会议号快速入会", "color": "#0ea5e9" }
                 ]
 
                 delegate: Rectangle {
@@ -97,7 +106,7 @@ Item {
                         Item { Layout.fillHeight: true }
 
                         Text {
-                            text: modelData.title === "加入会议" ? "在下方输入会议号" : "点击开始"
+                            text: modelData.title === "加入会议" ? "在下方输入会议号" : "点击创建"
                             color: "#ffffff"
                             font.pixelSize: 13
                             opacity: 0.86
@@ -108,10 +117,11 @@ Item {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            if (modelData.title === "加入会议")
+                            if (modelData.title === "加入会议") {
                                 meetingIdInput.forceActiveFocus()
-                            else
-                                root.actionRequested(modelData.title)
+                            } else {
+                                createMeetingDialog.openForCreation()
+                            }
                         }
                     }
                 }
@@ -169,7 +179,7 @@ Item {
                             required property color statusColor
 
                             width: recentMeetingList.width
-                            height: 88
+                            height: 104
                             radius: 8
                             color: "#f8fafc"
                             border.color: "#dbe3ef"
@@ -207,6 +217,51 @@ Item {
                                         text: schedule + "  " + participants + " · " + status
                                         color: "#64748b"
                                         font.pixelSize: 13
+                                    }
+                                }
+
+                                Row {
+                                    spacing: 8
+
+                                    Rectangle {
+                                        width: meetingCodeText.implicitWidth + 18
+                                        height: 24
+                                        radius: 6
+                                        color: "#ffffff"
+                                        border.color: "#e2e8f0"
+
+                                        Text {
+                                            id: meetingCodeText
+
+                                            anchors.centerIn: parent
+                                            text: "会议号  " + meetingId
+                                            color: "#64748b"
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 48
+                                        height: 24
+                                        radius: 6
+                                        color: copyMouseArea.containsMouse ? "#dbeafe" : "#eff6ff"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "复制"
+                                            color: "#2563eb"
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+
+                                        MouseArea {
+                                            id: copyMouseArea
+
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: root.meetingCodeCopyRequested(meetingId)
+                                        }
                                     }
                                 }
                             }

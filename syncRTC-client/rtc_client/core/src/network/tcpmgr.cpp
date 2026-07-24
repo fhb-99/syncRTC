@@ -79,18 +79,23 @@ TcpMgr::TcpMgr(QObject *parent)
 
 void TcpMgr::initHandlers()
 {
-    m_handlers.insert(AUTH_LOGIN_RESPONSE, [this](RequestID id, int len, QByteArray data){
+    // TcpMgr 只负责解析 JSON 并上抛，不解释具体业务语义。
+    const auto forwardJsonResponse = [this](RequestID id, int len, QByteArray data) {
         Q_UNUSED(len)
 
         QJsonDocument jsonDoc = QJsonDocument::fromJson(data);
         if (!jsonDoc.isObject()) {
-            qDebug() << "FAILED TO CREATE LOGIN RESPONSE JSON";
+            qDebug() << "FAILED TO CREATE RESPONSE JSON";
             return;
         }
 
         // TcpMgr 只解帧和解析 JSON，不解释登录成功或失败等业务含义
         emit signal_message_recv(id, jsonDoc.object());
-    });
+    };
+
+    m_handlers.insert(AUTH_LOGIN_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_CREATE_MEETING_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_PAST_MEETING_RESPONSE, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

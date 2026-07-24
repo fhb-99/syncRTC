@@ -31,10 +31,20 @@ public:
     int count() const;
     bool recentMeetingsLoaded() const;
 
-    // 将服务端 recent meetings JSON 原子替换为 QML 可读模型数据。
+    // QML 表单校验通过后调用；网络层只需连接下方信号即可发送请求。
+    Q_INVOKABLE void requestCreateMeeting(const QString &title, const QString &scheduledAt,
+                                          const QString &password);
+    // 进入历史会议页时调用，向服务端查询当前用户参与过的会议。
+    Q_INVOKABLE void requestHistoryMeetings();
+    // 会议号由服务端生成，QML 只调用该方法写入系统剪贴板。
+    Q_INVOKABLE bool copyMeetingCode(const QString &meetingCode);
+
+    // 将服务端 recent meetings JSON 原子替换为 QML 可读模型数据
     bool applyRecentMeeting(const QJsonArray &json);
 
 signals:
+    // 便于后续同步加载状态或记录用户操作。
+    void historyMeetingsRequested();
     void recentMeetingsChanged();
 
 private:
