@@ -23,12 +23,12 @@ public:
     MeetingController *meetingController() const { return m_meeting.get(); }
 
 signals:
-    // 个人资料处理完成后通知 QML 切换到会议主界面。
+    // 个人资料处理完成后通知 QML 切换到会议主界面
     void profileReady();
     void loginFailed(int error);
 
 public slots:
-    // 只接收 TcpMgr 回包，并根据 RequestID 分发给对应业务控制器。
+    // 只接收 TcpMgr 回包，并根据 RequestID 分发给对应业务控制器
     void slot_message_recv(RequestID reqID, QJsonObject json);
 
 private:

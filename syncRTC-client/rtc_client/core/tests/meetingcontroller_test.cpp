@@ -1,6 +1,8 @@
 #include <QtTest>
+#include <QJsonDocument>
 
 #include "../src/controllers/meeting/meetingcontroller.h"
+#include "../src/network/tcpmgr.h"
 
 class MeetingControllerTest : public QObject
 {
@@ -56,6 +58,21 @@ private slots:
         MeetingController meetingController;
 
         QVERIFY(!meetingController.copyMeetingCode(QStringLiteral("   ")));
+    }
+
+    void joinMeetingRequestSendsMeetingCode()
+    {
+        MeetingController meetingController;
+        const std::shared_ptr<TcpMgr> tcpMgr = TcpMgr::GetInstance();
+        QSignalSpy sendDataSpy(tcpMgr.get(), &TcpMgr::signal_send_data);
+
+        meetingController.requestJoinMeeting(QStringLiteral("75231032"));
+
+        QCOMPARE(sendDataSpy.count(), 1);
+        const QList<QVariant> arguments = sendDataSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toInt(), static_cast<int>(ID_JOIN_MEETING_REQUEST));
+        const QJsonObject request = QJsonDocument::fromJson(arguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value("meeting_code").toString(), QStringLiteral("75231032"));
     }
 
 };

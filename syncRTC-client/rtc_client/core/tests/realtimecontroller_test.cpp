@@ -89,6 +89,51 @@ private slots:
         QCOMPARE(realtimeController.meetingController()->rowCount(), 0);
     }
 
+    void successfulJoinResponseForwardsMeetingInfo()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy joinSucceededSpy(meetingController, &MeetingController::joinMeetingSucceeded);
+
+        meetingController->requestJoinMeeting(QStringLiteral("75231032"));
+        realtimeController.slot_message_recv(ID_JOIN_MEETING_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"meeting_code", "75231032"},
+            {"status", "scheduled"},
+            {"role", "participant"},
+            {"members", QJsonArray{1, 2}},
+        });
+
+        QCOMPARE(joinSucceededSpy.count(), 1);
+        const QList<QVariant> arguments = joinSucceededSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toString(), QStringLiteral("75231032"));
+        QCOMPARE(arguments.at(1).toString(), QStringLiteral("100001"));
+        QCOMPARE(arguments.at(2).toString(), QStringLiteral("scheduled"));
+        QCOMPARE(arguments.at(3).toString(), QStringLiteral("participant"));
+        const QVariantList expectedMembers{1, 2};
+        QCOMPARE(arguments.at(4).toList(), expectedMembers);
+    }
+
+    void rejectedJoinResponseDoesNotAllowMeetingEntry()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy joinSucceededSpy(meetingController, &MeetingController::joinMeetingSucceeded);
+        QSignalSpy joinFailedSpy(meetingController, &MeetingController::joinMeetingFailed);
+
+        meetingController->requestJoinMeeting(QStringLiteral("75231032"));
+        realtimeController.slot_message_recv(
+            ID_JOIN_MEETING_RESPONSE, QJsonObject{{"error", ErrorCodes::ERROR_MEETING_FULL}});
+
+        QCOMPARE(joinSucceededSpy.count(), 0);
+        QCOMPARE(joinFailedSpy.count(), 1);
+        QCOMPARE(joinFailedSpy.takeFirst().at(0).toInt(),
+                 static_cast<int>(ErrorCodes::ERROR_MEETING_FULL));
+    }
+
     void historyMeetingResponseKeepsRecentMeetingsIntact()
     {
         CurrentUserState currentUser;

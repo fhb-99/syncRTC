@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../auth/components"
+import "../../auth/components"
+import "../dialogs"
 
 Item {
     id: root

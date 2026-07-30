@@ -72,6 +72,13 @@ void RealtimeController::initHandlers()
             qWarning() << "Invalid history meetings response";
         }
     });
+
+    // 入会结果交给 MeetingController 校验并通知 QML；路由层不保存入会状态。
+    m_handlers.insert(ID_JOIN_MEETING_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_meeting->applyJoinMeetingResponse(json)) {
+            qWarning() << "Join meeting rejected or response invalid";
+        }
+    });
 }
 
 void RealtimeController::slot_message_recv(RequestID reqID, QJsonObject json)

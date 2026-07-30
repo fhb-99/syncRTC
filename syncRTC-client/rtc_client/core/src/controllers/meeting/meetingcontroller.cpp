@@ -70,6 +70,24 @@ QVariantList MeetingController::historyMeetings() const
     return m_historyMeetings;
 }
 
+void MeetingController::requestJoinMeeting(const QString &meetingCode)
+{
+    const QString code = meetingCode.trimmed();
+    if (code.isEmpty()) {
+        emit joinMeetingFailed(ErrorCodes::ERROR_JSON);
+        return;
+    }
+
+    QJsonObject request;
+    // 会议号是用户申请入会的唯一输入，后续服务端负责校验会议状态与入会额度。
+    request["meeting_code"] = code;
+    // 当前入会成功回包只包含 error，因此先保存本次已发送的会议号用于成功确认。
+    m_pendingJoinMeetingCode = code;
+
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_JOIN_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
 void MeetingController::requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                              const QString &password)
 {
@@ -232,5 +250,43 @@ bool MeetingController::applyHistoryMeetings(const QJsonArray &json)
     m_historyMeetings = std::move(updatedMeetings);
     // historyMeetings 属性变化后，历史页的 ListView 会重新绑定新列表。
     emit historyMeetingsChanged();
+    return true;
+}
+
+bool MeetingController::applyJoinMeetingResponse(const QJsonObject &json)
+{
+    const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+    if (error != ErrorCodes::SUCCESS) {
+        m_pendingJoinMeetingCode.clear();
+        emit joinMeetingFailed(error);
+        return false;
+    }
+
+    if (m_pendingJoinMeetingCode.isEmpty()) {
+        // 没有对应请求的成功回包不能驱动 QML 跳转，避免旧包或异常包误入会议。
+        emit joinMeetingFailed(ErrorCodes::ERROR_JSON);
+        return false;
+    }
+
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString meetingCode = json.value("meeting_code").toString().trimmed();
+    const QString status = json.value("status").toString().trimmed().toLower();
+    const QString role = json.value("role").toString().trimmed().toLower();
+    const QJsonValue membersValue = json.value("members");
+    if (meetingId.isEmpty() || meetingCode != m_pendingJoinMeetingCode ||
+        (status != QStringLiteral("scheduled") && status != QStringLiteral("in_progress") &&
+         status != QStringLiteral("ended")) ||
+        (role != QStringLiteral("host") && role != QStringLiteral("participant")) ||
+        !membersValue.isArray()) {
+        // 入会成功回包必须携带会议身份和状态，避免 QML 根据不完整数据进入错误界面。
+        m_pendingJoinMeetingCode.clear();
+        qWarning() << "Join meeting Failed, error is: " << error;
+        emit joinMeetingFailed(ErrorCodes::ERROR_JSON);
+        return false;
+    }
+
+    m_pendingJoinMeetingCode.clear();
+    emit joinMeetingSucceeded(meetingCode, meetingId, status, role,
+                              membersValue.toArray().toVariantList());
     return true;
 }

@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../auth/components"
+// 弹窗归类到 dialogs 后，需要回退两级才能复用登录页表单组件。
+import "../../auth/components"
 
 Dialog {
     id: root

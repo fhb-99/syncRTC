@@ -1,6 +1,9 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "hub"
+import "room"
+import "dialogs"
 
 Item {
     id: root
@@ -12,6 +15,11 @@ Item {
     readonly property string email: currentUser.email.length > 0 ? currentUser.email : previewEmail
     property string currentSection: "home"
     property string toastMessage: ""
+    property bool inMeeting: false
+    property string activeMeetingId: ""
+    property string activeMeetingCode: ""
+    property string activeMeetingStatus: "scheduled"
+    property string activeMeetingRole: "participant"
 
     function avatarText() {
         var name = username.trim()
@@ -21,6 +29,88 @@ Item {
     function showToast(message) {
         toastMessage = message
         toastTimer.restart()
+    }
+
+    function normalizeMeetingStatus(status) {
+        var value = String(status || "").toLowerCase()
+        if (value === "in_progress" || value === "1" || value === "进行中")
+            return "in_progress"
+        if (value === "ended" || value === "2" || value === "已结束")
+            return "ended"
+        return "scheduled"
+    }
+
+    function normalizeMeetingRole(role) {
+        var value = String(role || "").toLowerCase()
+        return value === "host" || value === "creator" || value === "co_host" ? "host" : "participant"
+    }
+
+    function payloadValue(payload, key, fallback) {
+        return payload && payload[key] !== undefined && payload[key] !== null ? payload[key] : fallback
+    }
+
+    function enterMeeting(payload, meetingId, status, role) {
+        var info = typeof payload === "object" && payload !== null ? payload : null
+        var code = info ? payloadValue(info, "meeting_code", payloadValue(info, "meetingCode", "")) : payload
+        var id = info ? payloadValue(info, "meeting_id", payloadValue(info, "meetingId", code)) : (meetingId || code)
+
+        activeMeetingId = String(id || code || "")
+        activeMeetingCode = String(code || activeMeetingId)
+        activeMeetingStatus = normalizeMeetingStatus(info ? payloadValue(info, "status", status) : status)
+        activeMeetingRole = normalizeMeetingRole(info ? payloadValue(info, "role", role) : role)
+        inMeeting = true
+    }
+
+    function leaveMeeting() {
+        inMeeting = false
+        activeMeetingId = ""
+        activeMeetingCode = ""
+        activeMeetingStatus = "scheduled"
+        activeMeetingRole = "participant"
+    }
+
+    function requestStartMeeting(meetingId) {
+        if (typeof meetingController.requestStartMeeting === "function") {
+            meetingController.requestStartMeeting(meetingId)
+        } else {
+            root.showToast("开始会议信令待接入")
+        }
+    }
+
+    function requestEndMeeting(meetingId) {
+        if (typeof meetingController.requestEndMeeting === "function") {
+            meetingController.requestEndMeeting(meetingId)
+        } else {
+            root.showToast("结束会议信令待接入")
+        }
+    }
+
+    function applyMeetingStarted(meetingId) {
+        if (meetingId === undefined || String(meetingId) === root.activeMeetingId)
+            root.activeMeetingStatus = "in_progress"
+    }
+
+    function applyMeetingEnded(meetingId) {
+        if (meetingId === undefined || String(meetingId) === root.activeMeetingId)
+            root.activeMeetingStatus = "ended"
+    }
+
+    Connections {
+        target: meetingController
+
+        // 只有 MeetingController 完成回包校验后，才允许切换到会议页。
+        function onJoinMeetingSucceeded(meetingCode) {
+            root.enterMeeting(
+                        meetingCode,
+                        arguments.length > 1 ? arguments[1] : "",
+                        arguments.length > 2 ? arguments[2] : "scheduled",
+                        arguments.length > 3 ? arguments[3] : "participant")
+        }
+
+        // 入会被服务端拒绝时保留在首页，并显示服务端错误码供后续文案映射。
+        function onJoinMeetingFailed(error) {
+            root.showToast("加入会议失败（错误码：" + error + "）")
+        }
     }
 
     function sectionIndex() {
@@ -98,6 +188,7 @@ Item {
     RowLayout {
         anchors.fill: parent
         spacing: 0
+        visible: !root.inMeeting
 
         Rectangle {
             id: sidebar
@@ -255,7 +346,8 @@ Item {
                     // 最近会议由 C++ MeetingController 提供，模型重置会自动刷新 ListView。
                     meetings: meetingController
                     onJoinMeetingRequested: function(meetingId) {
-                        root.showToast("会议号 " + meetingId + " 已通过校验，正在准备加入会议")
+                        // 仅提交入会申请；收到服务端成功回包后再进入会议页。
+                        meetingController.requestJoinMeeting(meetingId)
                     }
                     // 表单校验交给弹窗，QML 不直接伪造创建成功或修改会议列表。
                     onCreateMeetingRequested: function(title, scheduledAt, password) {
@@ -336,5 +428,23 @@ Item {
 
         username: root.username
         email: root.email
+    }
+
+    MeetingRoomPage {
+        z: 10
+        anchors.fill: parent
+        visible: root.inMeeting
+        meetingId: root.activeMeetingId
+        meetingCode: root.activeMeetingCode
+        status: root.activeMeetingStatus
+        role: root.activeMeetingRole
+        username: root.username
+        onStartMeetingRequested: function(meetingId) {
+            root.requestStartMeeting(meetingId)
+        }
+        onEndMeetingRequested: function(meetingId) {
+            root.requestEndMeeting(meetingId)
+        }
+        onLeaveRequested: root.leaveMeeting()
     }
 }

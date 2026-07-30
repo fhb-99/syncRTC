@@ -33,15 +33,16 @@ qt_add_qml_module(apprtc_client
         core/ui/pages/auth/components/EmailCodeInput.qml
         core/ui/pages/auth/components/PrimaryButton.qml
         core/ui/pages/meeting/MeetingShell.qml
-        core/ui/pages/meeting/MeetingHomePage.qml
-        core/ui/pages/meeting/CreateMeetingDialog.qml
-        core/ui/pages/meeting/MeetingTimePickerPopup.qml
-        core/ui/pages/meeting/MeetingHistoryPage.qml
-        core/ui/pages/meeting/ContactsPage.qml
-        core/ui/pages/meeting/AiAssistantPage.qml
-        core/ui/pages/meeting/SettingsPage.qml
-        core/ui/pages/meeting/ModulePlaceholderPage.qml
-        core/ui/pages/meeting/UserProfileDialog.qml
+        core/ui/pages/meeting/hub/MeetingHomePage.qml
+        core/ui/pages/meeting/hub/MeetingHistoryPage.qml
+        core/ui/pages/meeting/hub/ContactsPage.qml
+        core/ui/pages/meeting/hub/AiAssistantPage.qml
+        core/ui/pages/meeting/hub/SettingsPage.qml
+        core/ui/pages/meeting/room/MeetingRoomPage.qml
+        core/ui/pages/meeting/dialogs/CreateMeetingDialog.qml
+        core/ui/pages/meeting/dialogs/MeetingTimePickerPopup.qml
+        core/ui/pages/meeting/dialogs/UserProfileDialog.qml
+        core/ui/pages/meeting/common/ModulePlaceholderPage.qml
     SOURCES
         core/src/network/httpmgr.h
         core/src/network/httpmgr.cpp
