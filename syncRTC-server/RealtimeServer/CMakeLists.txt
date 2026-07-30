@@ -42,6 +42,7 @@ add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(Threads REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
+find_library(CRYPT_LIBRARY NAMES crypt REQUIRED)
 
 # Redis++ 在当前环境中没有 CMake 包，显式补齐它与 hiredis 的依赖关系。
 find_package(PkgConfig REQUIRED)
@@ -79,6 +80,7 @@ set(REALTIME_LOGIC_LIBRARIES
     Boost::filesystem
     Boost::system
     JsonCpp::JsonCpp
+    ${CRYPT_LIBRARY}
     SyncRTC::RedisPlusPlus
     MySQL::ConnectorCpp
 )
@@ -151,4 +153,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(logic_system_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
     add_test(NAME logic_system_test COMMAND logic_system_test)
+
+    add_executable(meeting_info_test
+        tests/MeetingInfoTest.cpp
+    )
+    target_include_directories(meeting_info_test
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_compile_options(meeting_info_test
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    target_link_libraries(meeting_info_test PRIVATE MySQL::ConnectorCpp)
+    add_test(NAME meeting_info_test COMMAND meeting_info_test)
 endif()

@@ -54,6 +54,17 @@ int main()
     }
 
     auto session = std::make_shared<Session>(sockets[0]);
+    if (!Expect(session->GetUserId() == 0, "新连接不应带有用户身份") ||
+        !Expect((session->SetUserId(42), session->GetUserId() == 42),
+                "登录后未保存用户身份") ||
+        !Expect(session->GetMeetingId() == 0, "新连接不应带有会议状态") ||
+        !Expect((session->SetMeetingId(1001), session->GetMeetingId() == 1001),
+                "入会后未保存会议状态")) {
+        ::close(sockets[0]);
+        ::close(sockets[1]);
+        return 1;
+    }
+
     const std::array<char, 7> frame = {
         static_cast<char>(0x03), static_cast<char>(0xE9),
         static_cast<char>(0x00), static_cast<char>(0x03),

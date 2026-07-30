@@ -11,6 +11,7 @@
 #include <atomic>
 #include <queue>
 #include <condition_variable>
+#include <vector>
 
 #include <mysql/mysql.h>
 #include <mysql/mysql_time.h>
@@ -126,6 +127,30 @@ public:
 	bool UpdatePwd(const std::string& email, const std::string& newpwd);
 
     bool GetUserInfo(const std::string& email, UserInfo& user);
+
+    bool GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meetings);
+
+    // 在同一事务内创建会议并登记创建者，成功后返回可直接展示的会议数据。
+    bool CreateMeeting(const CreateMeetingInfo& create_info,
+                       RecentMeetingInfo& meeting);
+
+    // 得到历史会议信息
+    bool GetHistoryMeeting(int uid, std::vector<HistoryMeetingInfo>& meetings);
+
+    // 根据唯一的meeting_code来查找用户所要参加的会议存不存在，其中包括会议的基本信息和创建者信息，返回false表示会议不存在或数据库查询失败。
+    bool GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo& meeting);
+    bool GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting);
+
+    // 仅当创建者仍在 scheduled 状态下开始会议，started_at 记录实际点击开始时间。
+    bool StartMeeting(std::uint64_t meeting_id, int user_id);
+    // 仅当创建者结束进行中的会议，ended_at 记录实际点击结束时间。
+    bool EndMeeting(std::uint64_t meeting_id, int user_id);
+
+    // 密码只在服务端内部校验，不能通过业务响应返回给客户端。
+    bool GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash);
+
+    // 入会成功后，保存用户与会议的持久关系，并记录首次入会时间。
+    bool UpdateMeetingPart(const MeetingInfo& meeting, int uid);
 
 private:
     friend class Singleton<MysqlMgr>;
