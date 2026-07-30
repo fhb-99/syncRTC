@@ -257,7 +257,7 @@ bool MysqlMgr::GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meeti
             "JOIN meetings AS m ON m.id = mp.meeting_id "
             "JOIN users AS u ON u.id = m.creator_user_id "
             "WHERE mp.user_id = ? "
-            "AND mp.participation_status = 0 "
+            "AND mp.participation_status IN (0, 1) "
             "AND m.status = 0 "
             "ORDER BY m.scheduled_at ASC, m.created_at DESC "
             "LIMIT 5"
@@ -421,13 +421,19 @@ bool MysqlMgr::CreateMeeting(const CreateMeetingInfo& create_info,
 
 
 
-bool MysqlMgr::GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings)
+bool MysqlMgr::GetHistoryMeeting(int uid, std::vector<HistoryMeetingInfo>& meetings)
 {
+    meetings.clear();
+
+    if (!pool_ || uid <= 0) {
+        return false;
+    }
+
     // 如果数据过多，还要进行分页处理
 
 
     auto con = pool_->getConnection();
-    if(con == nullptr) {
+    if (!con || !con->_con) {
         return false;
     }
 
@@ -437,14 +443,20 @@ bool MysqlMgr::GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings)
 
     try {
         std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
-            "SELECT m.meeting_code, m.title, user.display_name, "
-            "user.avatar_url, m.started_at, m.ended_at "
-            "FROM meetings AS m "
-            "JOIN users AS user ON m.creator_user_id = user.id "
-            "WHERE m.created_at < NOW() "
-            "ORDER BY m.created_at DESC "
+            "SELECT m.meeting_code, m.title, m.started_at, m.ended_at, "
+            "creator.display_name AS creator_display_name, "
+            "creator.avatar_url AS creator_avatar_url "
+            "FROM meeting_participants AS mp "
+            "JOIN meetings AS m ON m.id = mp.meeting_id "
+            "JOIN users AS creator ON creator.id = m.creator_user_id "
+            "WHERE mp.user_id = ? "
+            "AND mp.participation_status = 1 "
+            "AND m.status = 2 "
+            "ORDER BY m.ended_at DESC, m.created_at DESC "
             "LIMIT 5"
         ));
+
+        pstmt->setInt(1, uid);
 
         std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
 
@@ -452,11 +464,13 @@ bool MysqlMgr::GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings)
             HistoryMeetingInfo meeting;
             meeting.meeting_code = res->getString("meeting_code").asStdString();
             meeting.title = res->getString("title").asStdString();
-            meeting.creator_display_name = res->getString("display_name").asStdString();
-            if(!res->isNull("avatar_url")) {
+            meeting.creator_display_name = res->getString("creator_display_name").asStdString();
+            if (!res->isNull("creator_avatar_url")) {
                 meeting.creator_avatar_url = res->getString("creator_avatar_url").asStdString();
             }
-            meeting.started_at = res->getString("started_at").asStdString();
+            if (!res->isNull("started_at")) {
+                meeting.started_at = res->getString("started_at").asStdString();
+            }
             if(!res->isNull("ended_at")) {
                 meeting.ended_at = res->getString("ended_at").asStdString();
             }
@@ -473,9 +487,159 @@ bool MysqlMgr::GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings)
         return false;
     }
 }
-std::string meeting_code;       // 用户复制或输入的会议号
-    std::string title;              // 会议标题
-    std::string creator_display_name; // 创建者名称
-    std::string creator_avatar_url;   // 创建者头像
-    std::string started_at;         // 会议正式开始时间，一般就是预约开始时间
-    std::string ended_at;           // 会议结束时间
+
+
+
+bool MysqlMgr::GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo& meeting)
+{
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT m.id, m.meeting_code, m.title, m.creator_user_id, "
+            "m.status, m.visibility, "
+            "m.meeting_password_hash IS NOT NULL AS requires_password, "
+            "m.max_participants, m.scheduled_at, m.started_at, m.ended_at, "
+            "m.created_at, m.updated_at "
+            "FROM meetings AS m "
+            "WHERE m.meeting_code = ? "
+            "LIMIT 1"
+        ));
+
+        pstmt->setString(1, meeting_code);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+
+        if (res->next()) {
+            meeting.meeting_id = res->getUInt64("id");
+            meeting.meeting_code = res->getString("meeting_code").asStdString();
+            meeting.title = res->getString("title").asStdString();
+            meeting.creator_user_id = res->getUInt64("creator_user_id");
+            meeting.status = static_cast<MeetingStatus>(res->getUInt("status"));
+            meeting.visibility = static_cast<MeetingVisibility>(res->getUInt("visibility"));
+            meeting.requires_password = res->getBoolean("requires_password");
+            meeting.max_participants = static_cast<std::uint16_t>(res->getUInt("max_participants"));
+
+            return true;
+        }
+
+        return false;
+    }
+    catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+
+bool MysqlMgr::GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash)
+{
+    password_hash.clear();
+
+    if (!pool_ || meeting_id == 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT meeting_password_hash FROM meetings WHERE id = ? LIMIT 1"));
+        pstmt->setUInt64(1, meeting_id);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        if (!res->next() || res->isNull("meeting_password_hash")) {
+            return false;
+        }
+
+        password_hash = res->getString("meeting_password_hash").asStdString();
+        return !password_hash.empty();
+    }
+    catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+
+bool MysqlMgr::UpdateMeetingPart(const MeetingInfo& meeting, int uid)
+{
+    if (!pool_ || meeting.meeting_id == 0 || uid <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        if (meeting.visibility == MeetingVisibility::kPrivate &&
+            meeting.creator_user_id != static_cast<std::uint64_t>(uid)) {
+            // 私密会议只允许已经在参与表中的用户入会，避免仅凭会议号闯入。
+            std::unique_ptr<sql::PreparedStatement> check_stmt(con->_con->prepareStatement(
+                "SELECT 1 FROM meeting_participants "
+                "WHERE meeting_id = ? AND user_id = ? AND participation_status <> 2 "
+                "LIMIT 1"));
+            check_stmt->setUInt64(1, meeting.meeting_id);
+            check_stmt->setInt(2, uid);
+            std::unique_ptr<sql::ResultSet> check_result(check_stmt->executeQuery());
+            if (!check_result->next()) {
+                return false;
+            }
+
+            std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+                "UPDATE meeting_participants "
+                "SET participation_status = 1, "
+                "joined_at = IFNULL(joined_at, NOW(3)), "
+                "left_at = NULL "
+                "WHERE meeting_id = ? AND user_id = ? AND participation_status <> 2"));
+            pstmt->setUInt64(1, meeting.meeting_id);
+            pstmt->setInt(2, uid);
+            pstmt->executeUpdate();
+            return true;
+        }
+
+        // 公开会议允许用户通过会议号直接加入：没有参与记录就插入，有记录就幂等更新。
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "INSERT INTO meeting_participants "
+            "(meeting_id, user_id, participation_status, planned_at, joined_at, left_at) "
+            "VALUES (?, ?, 1, NOW(3), NOW(3), NULL) "
+            "ON DUPLICATE KEY UPDATE "
+            "participation_status = 1, "
+            "joined_at = IFNULL(joined_at, NOW(3)), "
+            "left_at = NULL"));
+        pstmt->setUInt64(1, meeting.meeting_id);
+        pstmt->setInt(2, uid);
+        pstmt->executeUpdate();
+        return true;
+    }
+    catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}

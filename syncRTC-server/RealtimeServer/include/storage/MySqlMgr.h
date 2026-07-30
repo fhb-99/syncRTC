@@ -135,7 +135,16 @@ public:
                        RecentMeetingInfo& meeting);
 
     // 得到历史会议信息
-    bool GetHistoryMeeting(std::vector<HistoryMeetingInfo>& meetings);
+    bool GetHistoryMeeting(int uid, std::vector<HistoryMeetingInfo>& meetings);
+
+    // 根据唯一的meeting_code来查找用户所要参加的会议存不存在，其中包括会议的基本信息和创建者信息，返回false表示会议不存在或数据库查询失败。
+    bool GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo& meeting);
+
+    // 密码只在服务端内部校验，不能通过业务响应返回给客户端。
+    bool GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash);
+
+    // 入会成功后，保存用户与会议的持久关系，并记录首次入会时间。
+    bool UpdateMeetingPart(const MeetingInfo& meeting, int uid);
 
 private:
     friend class Singleton<MysqlMgr>;

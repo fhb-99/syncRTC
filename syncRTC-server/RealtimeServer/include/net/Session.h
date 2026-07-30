@@ -26,6 +26,10 @@ public:
     void SetUserId(int user_id);
     int GetUserId() const;
 
+    // 入会成功后记录当前会议，后续聊天/成员状态都从服务端会话状态推导。
+    void SetMeetingId(std::uint64_t meeting_id);
+    std::uint64_t GetMeetingId() const;
+
     // 读取并解析 Qt 客户端的 4 字节帧头，完整帧直接投递到 LogicSystem。
     bool HandleRead();
 
@@ -41,6 +45,8 @@ private:
     int m_fd;
     // 未登录连接保持为 0。
     int m_user_id;
+    // 未进入会议时保持为 0；离会/断线清理后也应重置为 0。
+    std::uint64_t m_meeting_id;
     // 半包会暂存在这里，直到凑齐一个完整帧。
     std::string m_receive_buffer;
     // 非阻塞 send 未发完的数据按顺序保留在队列中。

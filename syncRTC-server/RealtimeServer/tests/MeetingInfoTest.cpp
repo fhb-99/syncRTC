@@ -35,6 +35,15 @@ int main()
     static_assert(std::is_same_v<decltype(&MysqlMgr::CreateMeeting),
                                  bool (MysqlMgr::*)(const CreateMeetingInfo&,
                                                    RecentMeetingInfo&)>);
+    static_assert(std::is_same_v<decltype(&MysqlMgr::GetHistoryMeeting),
+                                 bool (MysqlMgr::*)(int,
+                                                   std::vector<HistoryMeetingInfo>&)>);
+    static_assert(std::is_same_v<decltype(&MysqlMgr::GetMeetingPasswordHash),
+                                 bool (MysqlMgr::*)(std::uint64_t,
+                                                   std::string&)>);
+    static_assert(std::is_same_v<decltype(&MysqlMgr::UpdateMeetingPart),
+                                 bool (MysqlMgr::*)(const MeetingInfo&,
+                                                   int)>);
 
     const MeetingInfo meeting;
     return meeting.meeting_id == 0 &&

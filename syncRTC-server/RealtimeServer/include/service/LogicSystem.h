@@ -50,6 +50,9 @@ private:
     // 得到客户端历史会议信息处理
     void GetPastMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
+    // 处理用户的入会请求
+    void JoinMeeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+
     bool m_stop;
     std::mutex m_mutex;
     std::condition_variable m_cond;

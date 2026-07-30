@@ -10,6 +10,7 @@
 #include <queue>
 #include <condition_variable>
 #include <sw/redis++/redis++.h>
+#include <vector>
 
 
 class RedisConPool {
@@ -146,6 +147,13 @@ public:
     bool HSet(const std::string& key, const std::string& hkey, const std::string& value);
     bool HSet(const char* key, const char* hkey, const char* hvalue, size_t hvaluelen);
     std::string HGet(const std::string& key, const std::string& hkey);
+
+    // Set 操作
+    bool SAdd(const std::string& key, const std::string& member);
+    bool SRem(const std::string& key, const std::string& member);
+    bool SIsMember(const std::string& key, const std::string& member);
+    int SCard(const std::string& key);   // 获取集合成员数量
+    bool SMembers(const std::string& key, std::vector<std::string>& members); // 获取集合所有成员
 
     // 键操作
     bool Del(const std::string& key);

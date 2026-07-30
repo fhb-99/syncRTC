@@ -7,6 +7,7 @@
 #include <crypt.h>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 
 #include <json/json.h>
@@ -32,6 +33,39 @@ std::string HashMeetingPassword(const std::string& password)
     std::free(setting);
     std::free(data);
     return result;
+}
+
+bool CheckMeetingPassword(const std::string& password, const std::string& password_hash)
+{
+    if (password.empty() || password_hash.empty()) {
+        return false;
+    }
+
+    void* data = nullptr;
+    int data_size = 0;
+    char* hash = crypt_ra(password.c_str(), password_hash.c_str(), &data, &data_size);
+    const std::string result = hash ? hash : "";
+
+    std::free(data);
+    return !result.empty() && result == password_hash;
+}
+
+std::string RoomMembersKey(std::uint64_t meeting_id)
+{
+    return "room:" + std::to_string(meeting_id) + ":members";
+}
+
+std::string MeetingStatusText(MeetingStatus status)
+{
+    switch (status) {
+    case MeetingStatus::kInProgress:
+        return "in_progress";
+    case MeetingStatus::kEnded:
+        return "ended";
+    case MeetingStatus::kScheduled:
+    default:
+        return "scheduled";
+    }
 }
 
 } // namespace
@@ -113,6 +147,11 @@ void LogicSystem::initHandlers()
     // 处理客户端的得到历史会议请求
     maps[ID_PAST_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message){
         GetPastMeetingHandler(session, id, message);
+    };
+
+    // 处理入会
+    maps[ID_JOIN_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        JoinMeeetingHandler(session, id, message);
     };
 }
 
@@ -296,20 +335,26 @@ void LogicSystem::CreateMeetingHandler(std::shared_ptr<Session> session, std::ui
 
 
 
-void LogicSystem::GetPastMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+void LogicSystem::GetPastMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string&)
 {
-    Json::Reader reader;
-    Json::Value root;
-    reader.parse(message, root);
+    if (!session) {
+        return;
+    }
+
 
     Json::Value value;
     Defer defer([&value, session](){
         session->Send(ID_PAST_MEETING_RESPONSE, value.toStyledString());
     });
 
+    const int user_id = session->GetUserId();
+    if (user_id <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+
     std::vector<HistoryMeetingInfo> meetings;
-    bool is_get = MysqlMgr::GetInstance()->GetHistoryMeeting(meetings);
-    if(!is_get) {
+    if (!MysqlMgr::GetInstance()->GetHistoryMeeting(user_id, meetings)) {
         value["error"] = ErrorCodes::ERROR_MYSQL;
         return;
     }
@@ -328,4 +373,138 @@ void LogicSystem::GetPastMeetingHandler(std::shared_ptr<Session> session, std::u
 
     value["meetings"] = std::move(meeting_list);
     value["error"] = ErrorCodes::SUCCESS;
+}
+
+
+
+void LogicSystem::JoinMeeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    Defer defer([&value, session](){
+        session->Send(ID_JOIN_MEETING_RESPONSE, value.toStyledString());
+    });
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() ||
+        !root["meeting_code"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const std::string meeting_code = root["meeting_code"].asString();
+    if(meeting_code.empty()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const int uid = session->GetUserId();
+    if(uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+
+    MeetingInfo meeting_info;
+    if(!MysqlMgr::GetInstance()->GetMeetingInfoByCode(meeting_code, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+
+    // 加入会议只进入房间，不改变会议生命周期；已取消或已结束的会议都不能重新入会。
+    if (meeting_info.status == MeetingStatus::kCancelled ||
+        meeting_info.status == MeetingStatus::kEnded) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+
+    if (meeting_info.requires_password) {
+        if (!root["password"].isString()) {
+            value["error"] = ErrorCodes::ERROR_PASSWORD;
+            return;
+        }
+
+        std::string password_hash;
+        if (!MysqlMgr::GetInstance()->GetMeetingPasswordHash(meeting_info.meeting_id,
+                                                             password_hash) ||
+            !CheckMeetingPassword(root["password"].asString(), password_hash)) {
+            value["error"] = ErrorCodes::ERROR_PASSWORD;
+            return;
+        }
+    }
+
+    const std::string uid_str = std::to_string(uid);
+    const std::string room_key = RoomMembersKey(meeting_info.meeting_id);
+    auto redis = RedisMgr::GetInstance();
+    const std::string role =
+        meeting_info.creator_user_id == static_cast<std::uint64_t>(uid) ? "host" : "participant";
+
+
+    // Redis 保存当前正在房间里的成员；它不是历史记录，只服务实时通信。
+    const bool already_in_room = redis->SIsMember(room_key, uid_str);
+    const int current_count = redis->SCard(room_key);
+    if (!already_in_room && current_count >= meeting_info.max_participants) {
+        value["error"] = ErrorCodes::ERROR_MEETING_FULL;
+        return;
+    }
+
+    if(!redis->SAdd(room_key, uid_str)) {
+        value["error"] = ErrorCodes::ERROR_REDIS;
+        return;
+    }
+
+    // MySQL 保存“这个用户参加过这场会议”的事实，后续历史会议就靠它查询。
+    if (!MysqlMgr::GetInstance()->UpdateMeetingPart(meeting_info, uid)) {
+        if (!already_in_room) {
+            redis->SRem(room_key, uid_str);
+        }
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    const std::string presence_key = "presence:" + uid_str;
+    if (!redis->HSet(presence_key, "status", "in_meeting") ||
+        !redis->HSet(presence_key, "meeting_id", std::to_string(meeting_info.meeting_id))) {
+        if (!already_in_room) {
+            redis->SRem(room_key, uid_str);
+        }
+        value["error"] = ErrorCodes::ERROR_REDIS;
+        return;
+    }
+
+    std::vector<std::string> members;
+    if (!redis->SMembers(room_key, members)) {
+        value["error"] = ErrorCodes::ERROR_REDIS;
+        return;
+    }
+
+    // 入会成功后再绑定会议 ID，避免失败请求污染当前连接状态。
+    session->SetMeetingId(meeting_info.meeting_id);
+
+    Json::Value member_array(Json::arrayValue);
+    for (const auto& member : members) {
+        try {
+            member_array.append(static_cast<Json::UInt64>(std::stoull(member)));
+        }
+        catch (const std::exception&) {
+            // 理论上成员都是 uid；这里兜底避免脏数据导致响应构造失败。
+            member_array.append(member);
+        }
+    }
+
+    value["error"] = ErrorCodes::SUCCESS;
+    value["meeting_id"] = std::to_string(meeting_info.meeting_id);
+    value["meeting_code"] = meeting_info.meeting_code;
+    value["status"] = MeetingStatusText(meeting_info.status);
+    value["role"] = role;
+    value["members"] = member_array;
+    value["title"] = meeting_info.title;
+    value["creator_user_id"] = static_cast<Json::UInt64>(meeting_info.creator_user_id);
+    value["max_participants"] = meeting_info.max_participants;
+    value["current_participants"] = static_cast<Json::UInt>(members.size());
+    value["member_uids"] = std::move(member_array);
+
 }
