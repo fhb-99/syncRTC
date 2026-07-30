@@ -33,13 +33,16 @@ qt_add_qml_module(apprtc_client
         core/ui/pages/auth/components/EmailCodeInput.qml
         core/ui/pages/auth/components/PrimaryButton.qml
         core/ui/pages/meeting/MeetingShell.qml
-        core/ui/pages/meeting/MeetingHomePage.qml
-        core/ui/pages/meeting/MeetingHistoryPage.qml
-        core/ui/pages/meeting/ContactsPage.qml
-        core/ui/pages/meeting/AiAssistantPage.qml
-        core/ui/pages/meeting/SettingsPage.qml
-        core/ui/pages/meeting/ModulePlaceholderPage.qml
-        core/ui/pages/meeting/UserProfileDialog.qml
+        core/ui/pages/meeting/hub/MeetingHomePage.qml
+        core/ui/pages/meeting/hub/MeetingHistoryPage.qml
+        core/ui/pages/meeting/hub/ContactsPage.qml
+        core/ui/pages/meeting/hub/AiAssistantPage.qml
+        core/ui/pages/meeting/hub/SettingsPage.qml
+        core/ui/pages/meeting/room/MeetingRoomPage.qml
+        core/ui/pages/meeting/dialogs/CreateMeetingDialog.qml
+        core/ui/pages/meeting/dialogs/MeetingTimePickerPopup.qml
+        core/ui/pages/meeting/dialogs/UserProfileDialog.qml
+        core/ui/pages/meeting/common/ModulePlaceholderPage.qml
     SOURCES
         core/src/network/httpmgr.h
         core/src/network/httpmgr.cpp
@@ -61,6 +64,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
         SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
+        SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -181,6 +185,8 @@ if(BUILD_TESTING)
         core/src/network/tcpmgr.cpp
         core/src/controllers/meeting/profilecontroller.h
         core/src/controllers/meeting/profilecontroller.cpp
+        core/src/controllers/meeting/meetingcontroller.h
+        core/src/controllers/meeting/meetingcontroller.cpp
         core/src/controllers/meeting/realtimecontroller.h
         core/src/controllers/meeting/realtimecontroller.cpp
     )
@@ -188,10 +194,31 @@ if(BUILD_TESTING)
     target_link_libraries(realtimecontroller_test
         PRIVATE
             Qt6::Test
+            Qt6::Gui
             Qt6::Network
     )
 
     add_test(NAME realtimecontroller_test COMMAND realtimecontroller_test)
+
+    qt_add_executable(meetingcontroller_test
+        core/tests/meetingcontroller_test.cpp
+        core/src/controllers/meeting/meetingcontroller.h
+        core/src/controllers/meeting/meetingcontroller.cpp
+        core/src/models/Data.h
+        core/src/models/Singleton.h
+        core/src/models/global.h
+        core/src/network/tcpmgr.h
+        core/src/network/tcpmgr.cpp
+    )
+
+    target_link_libraries(meetingcontroller_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Gui
+            Qt6::Network
+    )
+
+    add_test(NAME meetingcontroller_test COMMAND meetingcontroller_test)
 endif()
 
 include(GNUInstallDirs)

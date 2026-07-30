@@ -20,8 +20,8 @@ Window {
     // 仅用于未接入后端时预览会议主界面；默认仍从登录页进入。
     property bool isUiPreviewMode: Qt.application.arguments.indexOf("--preview-main-ui") !== -1
     // 以下账号信息是主界面预览的写死展示数据，不代表真实登录用户。
-    property string previewUsername: "沈晟轩"
-    property string previewEmail: "shenyuxuan@example.com"
+    property string previewUsername: ""
+    property string previewEmail: ""
 
     signal loginSucceeded(string username, string email)
 
