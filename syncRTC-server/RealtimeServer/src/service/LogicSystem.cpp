@@ -5,6 +5,7 @@
 #include "common/data.h"
 
 #include <crypt.h>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -152,6 +153,14 @@ void LogicSystem::initHandlers()
     // 处理入会
     maps[ID_JOIN_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         JoinMeeetingHandler(session, id, message);
+    };
+
+    maps[ID_START_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        StartMeetingHandler(session, id, message);
+    };
+
+    maps[ID_LEAVE_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        LeaveMeetingHandler(session, id, message);
     };
 }
 
@@ -483,6 +492,13 @@ void LogicSystem::JoinMeeetingHandler(std::shared_ptr<Session> session, std::uin
 
     // 入会成功后再绑定会议 ID，避免失败请求污染当前连接状态。
     session->SetMeetingId(meeting_info.meeting_id);
+    auto& meeting_sessions = m_meeting_sessions[meeting_info.meeting_id];
+    meeting_sessions.erase(std::remove_if(meeting_sessions.begin(), meeting_sessions.end(),
+        [&session](const std::weak_ptr<Session>& item) {
+            const auto active_session = item.lock();
+            return !active_session || active_session == session;
+        }), meeting_sessions.end());
+    meeting_sessions.push_back(session);
 
     Json::Value member_array(Json::arrayValue);
     for (const auto& member : members) {
@@ -507,4 +523,162 @@ void LogicSystem::JoinMeeetingHandler(std::shared_ptr<Session> session, std::uin
     value["current_participants"] = static_cast<Json::UInt>(members.size());
     value["member_uids"] = std::move(member_array);
 
+}
+
+void LogicSystem::StartMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    Defer defer([&value, session](){
+        session->Send(ID_START_MEETING_RESPONSE, value.toStyledString());
+    });
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() || !root["meeting_id"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const std::string meeting_id_text = root["meeting_id"].asString();
+    std::uint64_t meeting_id = 0;
+    try {
+        std::size_t parsed_length = 0;
+        meeting_id = std::stoull(meeting_id_text, &parsed_length);
+        if (meeting_id == 0 || parsed_length != meeting_id_text.size()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    }
+    catch (const std::exception&) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+
+    MeetingInfo meeting_info;
+    if (!MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+
+    // 当前表结构未保存 co_host，先以创建者作为唯一可开始会议的主持人。
+    if (meeting_info.creator_user_id != static_cast<std::uint64_t>(uid)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+    if (meeting_info.status != MeetingStatus::kScheduled) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+    if (!MysqlMgr::GetInstance()->StartMeeting(meeting_id, uid)) {
+        value["error"] = ErrorCodes::ERROR_MYSQL;
+        return;
+    }
+
+    value["error"] = ErrorCodes::SUCCESS;
+    value["meeting_id"] = std::to_string(meeting_id);
+    value["status"] = "in_progress";
+
+    Json::Value notification;
+    notification["meeting_id"] = std::to_string(meeting_id);
+    notification["status"] = "in_progress";
+    const std::string notification_text = notification.toStyledString();
+
+    const auto sessions_it = m_meeting_sessions.find(meeting_id);
+    if (sessions_it == m_meeting_sessions.end()) {
+        return;
+    }
+
+    auto& meeting_sessions = sessions_it->second;
+    for (auto it = meeting_sessions.begin(); it != meeting_sessions.end();) {
+        const auto meeting_session = it->lock();
+        if (!meeting_session) {
+            it = meeting_sessions.erase(it);
+            continue;
+        }
+
+        meeting_session->Send(ID_MEETING_STARTED, notification_text);
+        ++it;
+    }
+}
+
+void LogicSystem::LeaveMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    Defer defer([&value, session](){
+        session->Send(ID_LEAVE_MEETING_RESPONSE, value.toStyledString());
+    });
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() || !root["meeting_id"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const std::string meeting_id_text = root["meeting_id"].asString();
+    std::uint64_t meeting_id = 0;
+    try {
+        std::size_t parsed_length = 0;
+        meeting_id = std::stoull(meeting_id_text, &parsed_length);
+        if (meeting_id == 0 || parsed_length != meeting_id_text.size()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    }
+    catch (const std::exception&) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+    if (session->GetMeetingId() != meeting_id) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    const std::string uid_text = std::to_string(uid);
+    const std::string room_key = RoomMembersKey(meeting_id);
+    auto redis = RedisMgr::GetInstance();
+    if (!redis->SRem(room_key, uid_text) ||
+        !redis->HSet("presence:" + uid_text, "status", "online") ||
+        !redis->HSet("presence:" + uid_text, "meeting_id", "")) {
+        value["error"] = ErrorCodes::ERROR_REDIS;
+        return;
+    }
+
+    const auto sessions_it = m_meeting_sessions.find(meeting_id);
+    if (sessions_it != m_meeting_sessions.end()) {
+        auto& meeting_sessions = sessions_it->second;
+        meeting_sessions.erase(std::remove_if(meeting_sessions.begin(), meeting_sessions.end(),
+            [&session](const std::weak_ptr<Session>& item) {
+                const auto active_session = item.lock();
+                return !active_session || active_session == session;
+            }), meeting_sessions.end());
+        if (meeting_sessions.empty()) {
+            m_meeting_sessions.erase(sessions_it);
+        }
+    }
+
+    // 离开会议只清理实时状态，不改变会议生命周期或参会记录。
+    session->SetMeetingId(0);
+    value["error"] = ErrorCodes::SUCCESS;
+    value["meeting_id"] = std::to_string(meeting_id);
 }

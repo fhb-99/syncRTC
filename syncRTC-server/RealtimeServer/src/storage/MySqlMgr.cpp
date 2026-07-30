@@ -540,6 +540,86 @@ bool MysqlMgr::GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo
     }
 }
 
+bool MysqlMgr::GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting)
+{
+    if (!pool_ || meeting_id == 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT m.id, m.meeting_code, m.title, m.creator_user_id, "
+            "m.status, m.visibility, "
+            "m.meeting_password_hash IS NOT NULL AS requires_password, "
+            "m.max_participants "
+            "FROM meetings AS m WHERE m.id = ? LIMIT 1"));
+        pstmt->setUInt64(1, meeting_id);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        if (!res->next()) {
+            return false;
+        }
+
+        meeting.meeting_id = res->getUInt64("id");
+        meeting.meeting_code = res->getString("meeting_code").asStdString();
+        meeting.title = res->getString("title").asStdString();
+        meeting.creator_user_id = res->getUInt64("creator_user_id");
+        meeting.status = static_cast<MeetingStatus>(res->getUInt("status"));
+        meeting.visibility = static_cast<MeetingVisibility>(res->getUInt("visibility"));
+        meeting.requires_password = res->getBoolean("requires_password");
+        meeting.max_participants = static_cast<std::uint16_t>(res->getUInt("max_participants"));
+        return true;
+    }
+    catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+bool MysqlMgr::StartMeeting(std::uint64_t meeting_id, int user_id)
+{
+    if (!pool_ || meeting_id == 0 || user_id <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "UPDATE meetings SET status = ?, started_at = NOW(3), ended_at = NULL "
+            "WHERE id = ? AND creator_user_id = ? AND status = ?"));
+        pstmt->setUInt(1, static_cast<unsigned int>(MeetingStatus::kInProgress));
+        pstmt->setUInt64(2, meeting_id);
+        pstmt->setInt(3, user_id);
+        pstmt->setUInt(4, static_cast<unsigned int>(MeetingStatus::kScheduled));
+        return pstmt->executeUpdate() == 1;
+    }
+    catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
 
 bool MysqlMgr::GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash)
 {

@@ -139,6 +139,10 @@ public:
 
     // 根据唯一的meeting_code来查找用户所要参加的会议存不存在，其中包括会议的基本信息和创建者信息，返回false表示会议不存在或数据库查询失败。
     bool GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo& meeting);
+    bool GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting);
+
+    // 仅当创建者仍在 scheduled 状态下开始会议，started_at 记录实际点击开始时间。
+    bool StartMeeting(std::uint64_t meeting_id, int user_id);
 
     // 密码只在服务端内部校验，不能通过业务响应返回给客户端。
     bool GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash);

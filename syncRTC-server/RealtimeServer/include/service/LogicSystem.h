@@ -11,6 +11,7 @@
 #include <queue>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 // 逻辑线程处理的最小消息单元，保存来源连接和已解出的完整协议帧。
 struct LogicNode
@@ -52,10 +53,14 @@ private:
 
     // 处理用户的入会请求
     void JoinMeeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void StartMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void LeaveMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     bool m_stop;
     std::mutex m_mutex;
     std::condition_variable m_cond;
     std::thread work_thread;
     std::queue<std::shared_ptr<LogicNode>> m_msg_que;
+    // LogicSystem 单线程访问，仅保存本进程中已进入会议的连接用于生命周期通知。
+    std::unordered_map<std::uint64_t, std::vector<std::weak_ptr<Session>>> m_meeting_sessions;
 };
