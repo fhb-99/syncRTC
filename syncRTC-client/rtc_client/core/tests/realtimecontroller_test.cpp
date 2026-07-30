@@ -134,6 +134,48 @@ private slots:
                  static_cast<int>(ErrorCodes::ERROR_MEETING_FULL));
     }
 
+    void startMeetingResponseAndNotificationReachMeetingController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy startSucceededSpy(meetingController, &MeetingController::startMeetingSucceeded);
+        QSignalSpy startedSpy(meetingController, &MeetingController::meetingStarted);
+
+        meetingController->requestStartMeeting(QStringLiteral("100001"));
+        realtimeController.slot_message_recv(ID_START_MEETING_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"status", "in_progress"},
+        });
+        realtimeController.slot_message_recv(ID_MEETING_STARTED, QJsonObject{
+            {"meeting_id", "100001"},
+            {"status", "in_progress"},
+        });
+
+        QCOMPARE(startSucceededSpy.count(), 1);
+        QCOMPARE(startSucceededSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
+        QCOMPARE(startedSpy.count(), 1);
+        QCOMPARE(startedSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
+    }
+
+    void leaveMeetingResponseReachesMeetingController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy leaveSucceededSpy(meetingController, &MeetingController::leaveMeetingSucceeded);
+
+        meetingController->requestLeaveMeeting(QStringLiteral("100001"));
+        realtimeController.slot_message_recv(ID_LEAVE_MEETING_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+        });
+
+        QCOMPARE(leaveSucceededSpy.count(), 1);
+        QCOMPARE(leaveSucceededSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
+    }
+
     void historyMeetingResponseKeepsRecentMeetingsIntact()
     {
         CurrentUserState currentUser;

@@ -88,6 +88,38 @@ void MeetingController::requestJoinMeeting(const QString &meetingCode)
         ID_JOIN_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
 }
 
+void MeetingController::requestStartMeeting(const QString &meetingId)
+{
+    const QString id = meetingId.trimmed();
+    if (id.isEmpty()) {
+        emit startMeetingFailed(ErrorCodes::ERROR_JSON);
+        return;
+    }
+
+    QJsonObject request;
+    request["meeting_id"] = id;
+    m_pendingStartMeetingId = id;
+
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_START_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+void MeetingController::requestLeaveMeeting(const QString &meetingId)
+{
+    const QString id = meetingId.trimmed();
+    if (id.isEmpty()) {
+        emit leaveMeetingFailed(ErrorCodes::ERROR_JSON);
+        return;
+    }
+
+    QJsonObject request;
+    request["meeting_id"] = id;
+    m_pendingLeaveMeetingId = id;
+
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_LEAVE_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
 void MeetingController::requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                              const QString &password)
 {
@@ -288,5 +320,61 @@ bool MeetingController::applyJoinMeetingResponse(const QJsonObject &json)
     m_pendingJoinMeetingCode.clear();
     emit joinMeetingSucceeded(meetingCode, meetingId, status, role,
                               membersValue.toArray().toVariantList());
+    return true;
+}
+
+bool MeetingController::applyStartMeetingResponse(const QJsonObject &json)
+{
+    const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+    if (error != ErrorCodes::SUCCESS) {
+        m_pendingStartMeetingId.clear();
+        emit startMeetingFailed(error);
+        return false;
+    }
+
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString status = json.value("status").toString().trimmed().toLower();
+    if (m_pendingStartMeetingId.isEmpty() || meetingId != m_pendingStartMeetingId ||
+        status != QStringLiteral("in_progress")) {
+        m_pendingStartMeetingId.clear();
+        emit startMeetingFailed(ErrorCodes::ERROR_JSON);
+        return false;
+    }
+
+    m_pendingStartMeetingId.clear();
+    emit startMeetingSucceeded(meetingId);
+    return true;
+}
+
+bool MeetingController::applyMeetingStarted(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString status = json.value("status").toString().trimmed().toLower();
+    if (meetingId.isEmpty() || status != QStringLiteral("in_progress")) {
+        return false;
+    }
+
+    emit meetingStarted(meetingId);
+    return true;
+}
+
+bool MeetingController::applyLeaveMeetingResponse(const QJsonObject &json)
+{
+    const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+    if (error != ErrorCodes::SUCCESS) {
+        m_pendingLeaveMeetingId.clear();
+        emit leaveMeetingFailed(error);
+        return false;
+    }
+
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    if (m_pendingLeaveMeetingId.isEmpty() || meetingId != m_pendingLeaveMeetingId) {
+        m_pendingLeaveMeetingId.clear();
+        emit leaveMeetingFailed(ErrorCodes::ERROR_JSON);
+        return false;
+    }
+
+    m_pendingLeaveMeetingId.clear();
+    emit leaveMeetingSucceeded(meetingId);
     return true;
 }

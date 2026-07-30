@@ -69,12 +69,12 @@ Item {
         activeMeetingRole = "participant"
     }
 
+    function requestLeaveMeeting(meetingId) {
+        meetingController.requestLeaveMeeting(meetingId)
+    }
+
     function requestStartMeeting(meetingId) {
-        if (typeof meetingController.requestStartMeeting === "function") {
-            meetingController.requestStartMeeting(meetingId)
-        } else {
-            root.showToast("开始会议信令待接入")
-        }
+        meetingController.requestStartMeeting(meetingId)
     }
 
     function requestEndMeeting(meetingId) {
@@ -110,6 +110,27 @@ Item {
         // 入会被服务端拒绝时保留在首页，并显示服务端错误码供后续文案映射。
         function onJoinMeetingFailed(error) {
             root.showToast("加入会议失败（错误码：" + error + "）")
+        }
+
+        function onStartMeetingSucceeded(meetingId) {
+            root.applyMeetingStarted(meetingId)
+        }
+
+        function onStartMeetingFailed(error) {
+            root.showToast("开始会议失败（错误码：" + error + "）")
+        }
+
+        function onMeetingStarted(meetingId) {
+            root.applyMeetingStarted(meetingId)
+        }
+
+        function onLeaveMeetingSucceeded(meetingId) {
+            if (String(meetingId) === root.activeMeetingId)
+                root.leaveMeeting()
+        }
+
+        function onLeaveMeetingFailed(error) {
+            root.showToast("离开会议失败（错误码：" + error + "）")
         }
     }
 
@@ -445,6 +466,6 @@ Item {
         onEndMeetingRequested: function(meetingId) {
             root.requestEndMeeting(meetingId)
         }
-        onLeaveRequested: root.leaveMeeting()
+        onLeaveRequested: root.requestLeaveMeeting(root.activeMeetingId)
     }
 }

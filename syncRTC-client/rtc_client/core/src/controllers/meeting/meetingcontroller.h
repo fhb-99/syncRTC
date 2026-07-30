@@ -38,6 +38,10 @@ public:
 
     // QML 输入校验通过后调用，由会议控制器发出入会请求。
     Q_INVOKABLE void requestJoinMeeting(const QString &meetingCode);
+    // 主持人点击开始会议后调用，会议权限和生命周期状态由服务端校验。
+    Q_INVOKABLE void requestStartMeeting(const QString &meetingId);
+    // 用户离开当前会议，服务端负责清理实时房间成员关系。
+    Q_INVOKABLE void requestLeaveMeeting(const QString &meetingId);
     // QML 表单校验通过后调用，由控制器直接交给 TcpMgr 发送请求。
     Q_INVOKABLE void requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                           const QString &password);
@@ -54,6 +58,11 @@ public:
     bool applyHistoryMeetings(const QJsonArray &json);
     // 校验入会回包；只有校验成功才通知 QML 进入会议页。
     bool applyJoinMeetingResponse(const QJsonObject &json);
+    // 校验开始会议回包；成功后由 QML 切换到正式会议状态。
+    bool applyStartMeetingResponse(const QJsonObject &json);
+    // 接收服务端广播，通知同一会议内的所有客户端刷新状态。
+    bool applyMeetingStarted(const QJsonObject &json);
+    bool applyLeaveMeetingResponse(const QJsonObject &json);
 
 signals:
     void recentMeetingsChanged();
@@ -64,6 +73,11 @@ signals:
                               const QVariantList &members);
     // 服务端拒绝入会或回包不合法时发出，QML 保持在当前页面。
     void joinMeetingFailed(int error);
+    void startMeetingSucceeded(const QString &meetingId);
+    void startMeetingFailed(int error);
+    void meetingStarted(const QString &meetingId);
+    void leaveMeetingSucceeded(const QString &meetingId);
+    void leaveMeetingFailed(int error);
 
 private:
     struct MeetingItem {
@@ -83,6 +97,8 @@ private:
     QVariantList m_historyMeetings;
     // 当前 UI 一次只能提交一个入会请求，用于将仅含 error 的成功回包关联到会议号。
     QString m_pendingJoinMeetingCode;
+    QString m_pendingStartMeetingId;
+    QString m_pendingLeaveMeetingId;
 };
 
 #endif // MEETINGCONTROLLER_H

@@ -97,6 +97,9 @@ void TcpMgr::initHandlers()
     m_handlers.insert(ID_CREATE_MEETING_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_PAST_MEETING_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_JOIN_MEETING_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_START_MEETING_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_STARTED, forwardJsonResponse);
+    m_handlers.insert(ID_LEAVE_MEETING_RESPONSE, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)
