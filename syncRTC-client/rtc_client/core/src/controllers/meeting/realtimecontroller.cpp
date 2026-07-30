@@ -97,6 +97,18 @@ void RealtimeController::initHandlers()
             qWarning() << "Leave meeting rejected or response invalid";
         }
     });
+
+    m_handlers.insert(ID_END_MEETING_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_meeting->applyEndMeetingResponse(json)) {
+            qWarning() << "End meeting rejected or response invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_ENDED, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingEnded(json)) {
+            qWarning() << "Meeting ended notification invalid";
+        }
+    });
 }
 
 void RealtimeController::slot_message_recv(RequestID reqID, QJsonObject json)

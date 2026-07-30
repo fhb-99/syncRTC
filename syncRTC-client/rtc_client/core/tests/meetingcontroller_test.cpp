@@ -105,6 +105,21 @@ private slots:
         QCOMPARE(request.value("meeting_id").toString(), QStringLiteral("100001"));
     }
 
+    void endMeetingRequestSendsMeetingId()
+    {
+        MeetingController meetingController;
+        const std::shared_ptr<TcpMgr> tcpMgr = TcpMgr::GetInstance();
+        QSignalSpy sendDataSpy(tcpMgr.get(), &TcpMgr::signal_send_data);
+
+        meetingController.requestEndMeeting(QStringLiteral("100001"));
+
+        QCOMPARE(sendDataSpy.count(), 1);
+        const QList<QVariant> arguments = sendDataSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toInt(), static_cast<int>(ID_END_MEETING_REQUEST));
+        const QJsonObject request = QJsonDocument::fromJson(arguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value("meeting_id").toString(), QStringLiteral("100001"));
+    }
+
 };
 
 QTEST_GUILESS_MAIN(MeetingControllerTest)

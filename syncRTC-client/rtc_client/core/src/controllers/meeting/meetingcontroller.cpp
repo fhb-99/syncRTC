@@ -120,6 +120,22 @@ void MeetingController::requestLeaveMeeting(const QString &meetingId)
         ID_LEAVE_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
 }
 
+void MeetingController::requestEndMeeting(const QString &meetingId)
+{
+    const QString id = meetingId.trimmed();
+    if (id.isEmpty()) {
+        emit endMeetingFailed(ErrorCodes::ERROR_JSON);
+        return;
+    }
+
+    QJsonObject request;
+    request["meeting_id"] = id;
+    m_pendingEndMeetingId = id;
+
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_END_MEETING_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
 void MeetingController::requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                              const QString &password)
 {
@@ -376,5 +392,40 @@ bool MeetingController::applyLeaveMeetingResponse(const QJsonObject &json)
 
     m_pendingLeaveMeetingId.clear();
     emit leaveMeetingSucceeded(meetingId);
+    return true;
+}
+
+bool MeetingController::applyEndMeetingResponse(const QJsonObject &json)
+{
+    const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
+    if (error != ErrorCodes::SUCCESS) {
+        m_pendingEndMeetingId.clear();
+        emit endMeetingFailed(error);
+        return false;
+    }
+
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString status = json.value("status").toString().trimmed().toLower();
+    if (m_pendingEndMeetingId.isEmpty() || meetingId != m_pendingEndMeetingId ||
+        status != QStringLiteral("ended")) {
+        m_pendingEndMeetingId.clear();
+        emit endMeetingFailed(ErrorCodes::ERROR_JSON);
+        return false;
+    }
+
+    m_pendingEndMeetingId.clear();
+    emit endMeetingSucceeded(meetingId);
+    return true;
+}
+
+bool MeetingController::applyMeetingEnded(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString status = json.value("status").toString().trimmed().toLower();
+    if (meetingId.isEmpty() || status != QStringLiteral("ended")) {
+        return false;
+    }
+
+    emit meetingEnded(meetingId);
     return true;
 }

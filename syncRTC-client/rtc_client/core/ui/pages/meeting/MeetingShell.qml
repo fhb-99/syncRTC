@@ -78,11 +78,7 @@ Item {
     }
 
     function requestEndMeeting(meetingId) {
-        if (typeof meetingController.requestEndMeeting === "function") {
-            meetingController.requestEndMeeting(meetingId)
-        } else {
-            root.showToast("结束会议信令待接入")
-        }
+        meetingController.requestEndMeeting(meetingId)
     }
 
     function applyMeetingStarted(meetingId) {
@@ -131,6 +127,18 @@ Item {
 
         function onLeaveMeetingFailed(error) {
             root.showToast("离开会议失败（错误码：" + error + "）")
+        }
+
+        function onEndMeetingSucceeded(meetingId) {
+            root.applyMeetingEnded(meetingId)
+        }
+
+        function onEndMeetingFailed(error) {
+            root.showToast("结束会议失败（错误码：" + error + "）")
+        }
+
+        function onMeetingEnded(meetingId) {
+            root.applyMeetingEnded(meetingId)
         }
     }
 

@@ -42,6 +42,8 @@ public:
     Q_INVOKABLE void requestStartMeeting(const QString &meetingId);
     // 用户离开当前会议，服务端负责清理实时房间成员关系。
     Q_INVOKABLE void requestLeaveMeeting(const QString &meetingId);
+    // 主持人结束会议，服务端校验权限并记录实际结束时间。
+    Q_INVOKABLE void requestEndMeeting(const QString &meetingId);
     // QML 表单校验通过后调用，由控制器直接交给 TcpMgr 发送请求。
     Q_INVOKABLE void requestCreateMeeting(const QString &title, const QString &scheduledAt,
                                           const QString &password);
@@ -63,6 +65,8 @@ public:
     // 接收服务端广播，通知同一会议内的所有客户端刷新状态。
     bool applyMeetingStarted(const QJsonObject &json);
     bool applyLeaveMeetingResponse(const QJsonObject &json);
+    bool applyEndMeetingResponse(const QJsonObject &json);
+    bool applyMeetingEnded(const QJsonObject &json);
 
 signals:
     void recentMeetingsChanged();
@@ -78,6 +82,9 @@ signals:
     void meetingStarted(const QString &meetingId);
     void leaveMeetingSucceeded(const QString &meetingId);
     void leaveMeetingFailed(int error);
+    void endMeetingSucceeded(const QString &meetingId);
+    void endMeetingFailed(int error);
+    void meetingEnded(const QString &meetingId);
 
 private:
     struct MeetingItem {
@@ -99,6 +106,7 @@ private:
     QString m_pendingJoinMeetingCode;
     QString m_pendingStartMeetingId;
     QString m_pendingLeaveMeetingId;
+    QString m_pendingEndMeetingId;
 };
 
 #endif // MEETINGCONTROLLER_H

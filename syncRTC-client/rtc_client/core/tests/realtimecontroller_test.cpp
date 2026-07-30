@@ -176,6 +176,31 @@ private slots:
         QCOMPARE(leaveSucceededSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
     }
 
+    void endMeetingResponseAndNotificationReachMeetingController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy endSucceededSpy(meetingController, &MeetingController::endMeetingSucceeded);
+        QSignalSpy endedSpy(meetingController, &MeetingController::meetingEnded);
+
+        meetingController->requestEndMeeting(QStringLiteral("100001"));
+        realtimeController.slot_message_recv(ID_END_MEETING_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"status", "ended"},
+        });
+        realtimeController.slot_message_recv(ID_MEETING_ENDED, QJsonObject{
+            {"meeting_id", "100001"},
+            {"status", "ended"},
+        });
+
+        QCOMPARE(endSucceededSpy.count(), 1);
+        QCOMPARE(endSucceededSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
+        QCOMPARE(endedSpy.count(), 1);
+        QCOMPARE(endedSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
+    }
+
     void historyMeetingResponseKeepsRecentMeetingsIntact()
     {
         CurrentUserState currentUser;
