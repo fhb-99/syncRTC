@@ -6,7 +6,9 @@ import "components"
 Item {
     id: root
 
-    signal loginRequested(string account, string password)
+    signal loginRequested(string account, string password, bool rememberLogin)
+    signal rememberedLoginRequested()
+    signal useOtherAccountRequested()
     signal loginSucceeded(string username, string email)
     signal registerRequested()
     signal forgotPasswordRequested()
@@ -16,6 +18,7 @@ Item {
     property string noticeMessage: ""
     property bool noticeIsError: false
     property bool loginPending: false
+    property bool hasRememberedSession: authController.loginController.hasRememberedSession
 
     function showNotice(message, isError) {
         noticeMessage = message
@@ -35,7 +38,13 @@ Item {
 
         noticeMessage = ""
         loginPending = true
-        root.loginRequested(accountInput.text.trim(), passwordInput.text)
+        root.loginRequested(accountInput.text.trim(), passwordInput.text, rememberCheck.checked)
+    }
+
+    function submitRememberedLogin() {
+        noticeMessage = ""
+        loginPending = true
+        root.rememberedLoginRequested()
     }
 
     Connections {
@@ -50,6 +59,25 @@ Item {
         function onLoginFailed(reason) {
             root.loginPending = false
             root.showNotice(reason, true)
+        }
+
+        function onRememberLoginWarning(reason) {
+            root.showNotice(reason, true)
+        }
+    }
+
+    Connections {
+        target: realtimeController
+
+        function onProfileReady() {
+            root.loginPending = false
+            root.showNotice("登录成功，正在进入会议...", false)
+            root.loginSucceeded(currentUser.username, currentUser.email)
+        }
+
+        function onLoginFailed(error) {
+            root.loginPending = false
+            root.showNotice("TCP 登录失败，错误码：" + error, true)
         }
     }
 
@@ -168,6 +196,7 @@ Item {
 
                 TextField {
                     id: accountInput
+                    visible: !root.hasRememberedSession
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     enabled: !root.loginPending
@@ -192,11 +221,13 @@ Item {
                 }
 
                 FieldErrorText {
+                    visible: !root.hasRememberedSession
                     message: root.accountError
                 }
 
                 PasswordField {
                     id: passwordInput
+                    visible: !root.hasRememberedSession
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     enabled: !root.loginPending
@@ -212,10 +243,20 @@ Item {
                 }
 
                 FieldErrorText {
+                    visible: !root.hasRememberedSession
                     message: root.passwordError
                 }
 
+                Text {
+                    visible: root.hasRememberedSession
+                    text: "已保存登录状态"
+                    color: "#64748b"
+                    font.pixelSize: 15
+                    Layout.bottomMargin: 12
+                }
+
                 RowLayout {
+                    visible: !root.hasRememberedSession
                     Layout.fillWidth: true
                     Layout.topMargin: -2
 
@@ -223,7 +264,7 @@ Item {
                         id: rememberCheck
                         enabled: !root.loginPending
                         text: "记住登录状态"
-                        checked: true
+                        checked: false
                         font.pixelSize: 13
                     }
 
@@ -252,7 +293,24 @@ Item {
                     Layout.preferredHeight: 52
                     enabled: !root.loginPending
                     text: root.loginPending ? "登录中..." : "登录"
-                    onClicked: root.submitLogin()
+                    onClicked: root.hasRememberedSession ? root.submitRememberedLogin() : root.submitLogin()
+                }
+
+                Text {
+                    visible: root.hasRememberedSession
+                    opacity: root.loginPending ? 0.45 : 1.0
+                    text: "使用其他账号"
+                    color: "#2563eb"
+                    font.pixelSize: 13
+                    font.bold: true
+                    Layout.alignment: Qt.AlignHCenter
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: !root.loginPending
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.useOtherAccountRequested()
+                    }
                 }
 
                 Row {

@@ -35,18 +35,18 @@ Window {
         id: loginPage
 
         LoginPage {
-            onLoginRequested: function(account, password) {
-                authController.loginController.LoginRequest(account, password)
+            onLoginRequested: function(account, password, rememberLogin) {
+                authController.loginController.LoginRequest(account, password, rememberLogin)
             }
+
+            onRememberedLoginRequested: authController.loginController.ResumeLoginRequest()
+            onUseOtherAccountRequested: authController.loginController.ForgetRememberedSession()
 
             onLoginSucceeded: function(username, email) {
                 root.loggedInUsername = username
                 root.loggedInEmail = email
                 root.loginSucceeded(username, email)
-                stackView.replace(meetingShell, {
-                    "username": username,
-                    "email": email
-                })
+                stackView.replace(meetingShell)
             }
 
             onRegisterRequested: stackView.push(registerPage)
@@ -89,8 +89,8 @@ Window {
         id: meetingShell
 
         MeetingShell {
-            username: root.isUiPreviewMode ? root.previewUsername : ""
-            email: root.isUiPreviewMode ? root.previewEmail : ""
+            previewUsername: root.isUiPreviewMode ? root.previewUsername : ""
+            previewEmail: root.isUiPreviewMode ? root.previewEmail : ""
         }
     }
 }
