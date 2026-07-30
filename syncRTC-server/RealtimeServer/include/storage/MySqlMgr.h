@@ -143,6 +143,8 @@ public:
 
     // 仅当创建者仍在 scheduled 状态下开始会议，started_at 记录实际点击开始时间。
     bool StartMeeting(std::uint64_t meeting_id, int user_id);
+    // 仅当创建者结束进行中的会议，ended_at 记录实际点击结束时间。
+    bool EndMeeting(std::uint64_t meeting_id, int user_id);
 
     // 密码只在服务端内部校验，不能通过业务响应返回给客户端。
     bool GetMeetingPasswordHash(std::uint64_t meeting_id, std::string& password_hash);

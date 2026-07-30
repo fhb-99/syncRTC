@@ -55,6 +55,7 @@ private:
     void JoinMeeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void StartMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void LeaveMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void EndMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     bool m_stop;
     std::mutex m_mutex;

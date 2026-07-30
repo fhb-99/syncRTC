@@ -162,6 +162,10 @@ void LogicSystem::initHandlers()
     maps[ID_LEAVE_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         LeaveMeetingHandler(session, id, message);
     };
+
+    maps[ID_END_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        EndMeetingHandler(session, id, message);
+    };
 }
 
 
@@ -681,4 +685,85 @@ void LogicSystem::LeaveMeetingHandler(std::shared_ptr<Session> session, std::uin
     session->SetMeetingId(0);
     value["error"] = ErrorCodes::SUCCESS;
     value["meeting_id"] = std::to_string(meeting_id);
+}
+
+void LogicSystem::EndMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    Defer defer([&value, session](){
+        session->Send(ID_END_MEETING_RESPONSE, value.toStyledString());
+    });
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() || !root["meeting_id"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const std::string meeting_id_text = root["meeting_id"].asString();
+    std::uint64_t meeting_id = 0;
+    try {
+        std::size_t parsed_length = 0;
+        meeting_id = std::stoull(meeting_id_text, &parsed_length);
+        if (meeting_id == 0 || parsed_length != meeting_id_text.size()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    }
+    catch (const std::exception&) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+
+    MeetingInfo meeting_info;
+    if (!MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+
+    // 当前表结构未保存 co_host，先以创建者作为唯一可结束会议的主持人。
+    if (meeting_info.creator_user_id != static_cast<std::uint64_t>(uid)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+    if (meeting_info.status != MeetingStatus::kInProgress) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+    if (!MysqlMgr::GetInstance()->EndMeeting(meeting_id, uid)) {
+        value["error"] = ErrorCodes::ERROR_MYSQL;
+        return;
+    }
+
+    value["error"] = ErrorCodes::SUCCESS;
+    value["meeting_id"] = std::to_string(meeting_id);
+    value["status"] = "ended";
+
+    Json::Value notification;
+    notification["meeting_id"] = std::to_string(meeting_id);
+    notification["status"] = "ended";
+    const std::string notification_text = notification.toStyledString();
+
+    const auto sessions_it = m_meeting_sessions.find(meeting_id);
+    if (sessions_it == m_meeting_sessions.end()) {
+        return;
+    }
+
+    for (const std::weak_ptr<Session>& item : sessions_it->second) {
+        const auto meeting_session = item.lock();
+        if (meeting_session) {
+            meeting_session->Send(ID_MEETING_ENDED, notification_text);
+        }
+    }
 }
