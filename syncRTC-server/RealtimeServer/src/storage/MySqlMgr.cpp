@@ -540,6 +540,44 @@ bool MysqlMgr::GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo
     }
 }
 
+bool MysqlMgr::GetUserDisplayNameById(int user_id, std::string& display_name)
+{
+    display_name.clear();
+    if (!pool_ || user_id <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT COALESCE(NULLIF(display_name, ''), username) AS display_name "
+            "FROM users WHERE id = ? LIMIT 1"));
+        pstmt->setInt(1, user_id);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        if (!res->next()) {
+            return false;
+        }
+
+        display_name = res->getString("display_name").asStdString();
+        return !display_name.empty();
+    }
+    catch (const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
 bool MysqlMgr::GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting)
 {
     if (!pool_ || meeting_id == 0) {

@@ -56,6 +56,7 @@ private:
     void StartMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void LeaveMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void EndMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void SendMeetingMessageHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     bool m_stop;
     std::mutex m_mutex;
@@ -64,4 +65,5 @@ private:
     std::queue<std::shared_ptr<LogicNode>> m_msg_que;
     // LogicSystem 单线程访问，仅保存本进程中已进入会议的连接用于生命周期通知。
     std::unordered_map<std::uint64_t, std::vector<std::weak_ptr<Session>>> m_meeting_sessions;
+    std::uint64_t m_next_message_sequence = 0;
 };

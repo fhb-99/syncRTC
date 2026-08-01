@@ -6,8 +6,11 @@
 
 #include <crypt.h>
 #include <algorithm>
+#include <ctime>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -67,6 +70,16 @@ std::string MeetingStatusText(MeetingStatus status)
     default:
         return "scheduled";
     }
+}
+
+std::string CurrentTimeText()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm local_time{};
+    localtime_r(&now, &local_time);
+    std::ostringstream stream;
+    stream << std::put_time(&local_time, "%H:%M");
+    return stream.str();
 }
 
 } // namespace
@@ -165,6 +178,10 @@ void LogicSystem::initHandlers()
 
     maps[ID_END_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         EndMeetingHandler(session, id, message);
+    };
+
+    maps[ID_SEND_MEETING_MESSAGE_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        SendMeetingMessageHandler(session, id, message);
     };
 }
 
@@ -507,11 +524,27 @@ void LogicSystem::JoinMeeetingHandler(std::shared_ptr<Session> session, std::uin
     Json::Value member_array(Json::arrayValue);
     for (const auto& member : members) {
         try {
-            member_array.append(static_cast<Json::UInt64>(std::stoull(member)));
+            const std::uint64_t member_uid = std::stoull(member);
+            Json::Value member_value;
+            member_value["user_id"] = static_cast<Json::UInt64>(member_uid);
+            member_value["is_self"] = member_uid == static_cast<std::uint64_t>(uid);
+
+            std::string member_name;
+            if (MysqlMgr::GetInstance()->GetUserDisplayNameById(
+                    static_cast<int>(member_uid), member_name)) {
+                member_value["name"] = member_name;
+            } else {
+                member_value["name"] = "Member " + member;
+            }
+            member_array.append(std::move(member_value));
         }
         catch (const std::exception&) {
             // 理论上成员都是 uid；这里兜底避免脏数据导致响应构造失败。
-            member_array.append(member);
+            Json::Value member_value;
+            member_value["user_id"] = member;
+            member_value["name"] = "Member " + member;
+            member_value["is_self"] = false;
+            member_array.append(std::move(member_value));
         }
     }
 
@@ -765,5 +798,159 @@ void LogicSystem::EndMeetingHandler(std::shared_ptr<Session> session, std::uint1
         if (meeting_session) {
             meeting_session->Send(ID_MEETING_ENDED, notification_text);
         }
+    }
+}
+
+void LogicSystem::SendMeetingMessageHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    Defer defer([&value, session](){
+        session->Send(ID_SEND_MEETING_MESSAGE_RESPONSE, value.toStyledString());
+    });
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() ||
+        !root["meeting_id"].isString() || !root["chat_type"].isString() ||
+        !root["content"].isString() || !root["client_msg_id"].isString() ||
+        !root.isMember("target_user_id")) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const std::string meeting_id_text = root["meeting_id"].asString();
+    const std::string chat_type = root["chat_type"].asString();
+    const std::string content = root["content"].asString();
+    const std::string client_msg_id = root["client_msg_id"].asString();
+    value["meeting_id"] = meeting_id_text;
+    value["client_msg_id"] = client_msg_id;
+    if ((chat_type != "group" && chat_type != "private") || content.empty() || content.size() > 2000 ||
+        client_msg_id.empty() || client_msg_id.size() > 128) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    std::uint64_t target_user_id = 0;
+    if (chat_type == "group") {
+        if (!root["target_user_id"].isNull()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    } else {
+        const Json::Value &target_value = root["target_user_id"];
+        if (!target_value.isUInt() && !target_value.isUInt64() && !target_value.isInt()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+        if (target_value.isInt() && target_value.asInt() <= 0) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+        target_user_id = target_value.asUInt64();
+        if (target_user_id == 0) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    }
+
+    std::uint64_t meeting_id = 0;
+    try {
+        std::size_t parsed_length = 0;
+        meeting_id = std::stoull(meeting_id_text, &parsed_length);
+        if (meeting_id == 0 || parsed_length != meeting_id_text.size()) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+    }
+    catch (const std::exception&) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+    if (session->GetMeetingId() != meeting_id) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    // 只相信服务端 session 与 Redis 房间成员关系，不使用客户端传入的发送者身份。
+    const std::string room_key = RoomMembersKey(meeting_id);
+    if (!RedisMgr::GetInstance()->SIsMember(room_key, std::to_string(uid))) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+    if (chat_type == "private" &&
+        !RedisMgr::GetInstance()->SIsMember(room_key, std::to_string(target_user_id))) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    MeetingInfo meeting_info;
+    if (!MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+    if (meeting_info.status == MeetingStatus::kEnded || meeting_info.status == MeetingStatus::kCancelled) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+
+    std::string sender_name;
+    if (!MysqlMgr::GetInstance()->GetUserDisplayNameById(uid, sender_name)) {
+        value["error"] = ErrorCodes::ERROR_MYSQL;
+        return;
+    }
+
+    // 当前聊天不持久化历史记录；message_id 仅用于本次服务进程内的消息确认和去重。
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    const std::string message_id = std::to_string(milliseconds) + "-" +
+                                   std::to_string(uid) + "-" +
+                                   std::to_string(++m_next_message_sequence);
+
+    Json::Value message_value;
+    message_value["message_id"] = message_id;
+    message_value["client_msg_id"] = client_msg_id;
+    message_value["meeting_id"] = std::to_string(meeting_id);
+    message_value["chat_type"] = chat_type;
+    message_value["sender_user_id"] = uid;
+    message_value["sender_name"] = sender_name;
+    message_value["receiver_user_id"] = chat_type == "group"
+        ? Json::Value(Json::nullValue)
+        : Json::Value(static_cast<Json::UInt64>(target_user_id));
+    message_value["content"] = content;
+    message_value["created_at"] = CurrentTimeText();
+
+    value = message_value;
+    value["error"] = ErrorCodes::SUCCESS;
+    const std::string notification_text = message_value.toStyledString();
+
+    // 私聊只推送给发送者和目标成员；群聊仍推送给当前房间内的所有连接。
+    const auto sessions_it = m_meeting_sessions.find(meeting_id);
+    if (sessions_it == m_meeting_sessions.end()) {
+        return;
+    }
+
+    auto &meeting_sessions = sessions_it->second;
+    for (auto it = meeting_sessions.begin(); it != meeting_sessions.end();) {
+        const auto meeting_session = it->lock();
+        if (!meeting_session) {
+            it = meeting_sessions.erase(it);
+            continue;
+        }
+
+        if (chat_type == "group" || meeting_session->GetUserId() == uid ||
+            meeting_session->GetUserId() == static_cast<int>(target_user_id)) {
+            meeting_session->Send(ID_MEETING_MESSAGE_PUSH, notification_text);
+        }
+        ++it;
     }
 }
