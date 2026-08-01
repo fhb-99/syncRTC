@@ -6,7 +6,8 @@ RealtimeController::RealtimeController(CurrentUserState *currentUser, QObject *p
     : QObject{parent},
       m_currentUser(currentUser),
       m_profile(std::make_unique<ProfileController>(currentUser)),
-      m_meeting(std::make_unique<MeetingController>())
+      m_meeting(std::make_unique<MeetingController>()),
+      m_chat(std::make_unique<ChatController>())
 {
     Q_ASSERT(m_currentUser);
 
@@ -107,6 +108,19 @@ void RealtimeController::initHandlers()
     m_handlers.insert(ID_MEETING_ENDED, [this](const QJsonObject &json) {
         if (!m_meeting->applyMeetingEnded(json)) {
             qWarning() << "Meeting ended notification invalid";
+        }
+    });
+
+    // 聊天控制器只处理消息收发和展示，生命周期判断仍由 MeetingController 与服务端负责。
+    m_handlers.insert(ID_SEND_MEETING_MESSAGE_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_chat->applySendMessageAck(json)) {
+            qWarning() << "Meeting chat send acknowledgement invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MESSAGE_PUSH, [this](const QJsonObject &json) {
+        if (!m_chat->applyMessageReceived(json)) {
+            qWarning() << "Meeting chat push invalid";
         }
     });
 }

@@ -201,6 +201,49 @@ private slots:
         QCOMPARE(endedSpy.takeFirst().at(0).toString(), QStringLiteral("100001"));
     }
 
+    void meetingChatMessagesReachChatController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        ChatController *chatController = realtimeController.chatController();
+        chatController->setActiveMeetingId("100001");
+
+        chatController->sendGroupMessage("100001", "我的消息");
+        const QString clientMsgId = chatController->data(
+            chatController->index(0, 0), ChatController::ClientMsgIdRole).toString();
+        realtimeController.slot_message_recv(ID_SEND_MEETING_MESSAGE_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"message_id", "server-mine"},
+            {"client_msg_id", clientMsgId},
+            {"meeting_id", "100001"},
+            {"chat_type", "group"},
+            {"sender_user_id", 6},
+            {"sender_name", "我"},
+            {"receiver_user_id", QJsonValue(QJsonValue::Null)},
+            {"content", "我的消息"},
+            {"created_at", "10:29"},
+        });
+
+        QCOMPARE(chatController->data(chatController->index(0, 0), ChatController::DeliveryStateRole).toString(),
+                 QStringLiteral("sent"));
+
+        realtimeController.slot_message_recv(ID_MEETING_MESSAGE_PUSH, QJsonObject{
+            {"message_id", "server-1"},
+            {"client_msg_id", "remote-1"},
+            {"meeting_id", "100001"},
+            {"chat_type", "group"},
+            {"sender_user_id", 7},
+            {"sender_name", "测试用户"},
+            {"receiver_user_id", QJsonValue(QJsonValue::Null)},
+            {"content", "大家好"},
+            {"created_at", "10:30"},
+        });
+
+        QCOMPARE(chatController->rowCount(), 2);
+        QCOMPARE(chatController->data(chatController->index(1, 0), ChatController::ContentRole).toString(),
+                 QStringLiteral("大家好"));
+    }
+
     void historyMeetingResponseKeepsRecentMeetingsIntact()
     {
         CurrentUserState currentUser;

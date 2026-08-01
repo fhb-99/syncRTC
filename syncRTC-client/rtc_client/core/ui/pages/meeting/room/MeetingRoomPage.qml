@@ -10,15 +10,18 @@ Item {
     property string status: "scheduled"
     property string role: "participant"
     property string username: ""
+    property var members: []
+    property var chatController: null
     property bool microphoneMuted: false
     property bool cameraEnabled: true
     property bool sharingEnabled: false
     // 右侧抽屉只在拿到对应的真实会中数据后展示，避免进入会议时显示演示内容。
     property string sidePanelMode: ""
     property bool hasRealtimeMeetingData: false
-    // 聊天范围和私聊对象目前仅用于 QML 展示，后续由服务端消息字段驱动。
+    // 私聊尚未接入，群聊范围固定为当前会议房间。
     property string chatScope: "group"
     property string privateRecipient: ""
+    property string privateRecipientId: ""
     property bool emojiPickerVisible: false
     readonly property bool isHost: role === "host" || role === "co_host" || role === "creator"
     readonly property bool isScheduled: status === "scheduled"
@@ -81,16 +84,18 @@ Item {
     function openGroupChat() {
         chatScope = "group"
         privateRecipient = ""
+        privateRecipientId = ""
         emojiPickerVisible = false
         sidePanelMode = "chat"
     }
 
-    function openPrivateChat(memberName) {
-        if (!hasRealtimeMeetingData)
+    function openPrivateChat(memberName, memberId) {
+        if (String(memberId).length === 0)
             return
 
         chatScope = "private"
         privateRecipient = memberName
+        privateRecipientId = String(memberId)
         emojiPickerVisible = false
         sidePanelMode = "chat"
     }
@@ -99,7 +104,7 @@ Item {
         sidePanelMode = "members"
     }
 
-    // “发送给”入口统一跳转至成员列表，用户可从中发起私聊或返回群聊。
+    // 收件人入口回到成员列表，私聊目标只能从当前会议成员中选择。
     function chooseChatRecipient() {
         if (!hasRealtimeMeetingData)
             return
@@ -117,7 +122,7 @@ Item {
         sidePanelMode = ""
     }
 
-    // 群聊本地模式也支持表情输入；私聊未接入时不允许打开表情面板。
+    // 表情仅作为群聊输入内容的一部分，私聊输入保持纯文本。
     function toggleEmojiPicker() {
         if (chatScope !== "group")
             return
@@ -125,42 +130,59 @@ Item {
         emojiPickerVisible = !emojiPickerVisible
     }
 
-    function currentTimeText() {
-        var now = new Date()
-        var hour = now.getHours().toString().padStart(2, "0")
-        var minute = now.getMinutes().toString().padStart(2, "0")
-        return hour + ":" + minute
-    }
-
-    // 群聊在信令接入前仅追加到本地模型，消息只对当前用户可见。
+    // 根据当前聊天范围发送群聊或私聊，消息状态由服务端 ack 和推送驱动。
     function sendChatMessage() {
-        if (chatScope !== "group")
-            return
-
         var content = chatInput.text.trim()
-        if (content.length === 0)
+        if (content.length === 0 || !root.chatController)
             return
 
-        groupChatModel.append({ "name": "我", "message": content, "time": currentTimeText() })
+        if (chatScope === "private")
+            root.chatController.sendPrivateMessage(root.meetingId, Number(privateRecipientId), content)
+        else
+            root.chatController.sendGroupMessage(root.meetingId, content)
         chatInput.text = ""
         emojiPickerVisible = false
-        chatHistory.positionViewAtEnd()
     }
+
+    // 入会回包提供当前房间成员，私聊只使用其中的 user_id 作为目标身份。
+    function refreshMembers() {
+        memberModel.clear()
+        for (var i = 0; i < members.length; ++i) {
+            var member = members[i]
+            var userId = member && typeof member === "object"
+                    ? String(member.user_id || "") : String(member)
+            if (userId.length === 0)
+                continue
+
+            var memberName = member && typeof member === "object" && member.name
+                    ? String(member.name) : "成员 " + userId
+            memberModel.append({
+                "userId": userId,
+                "name": memberName,
+                "color": "#2563eb",
+                "muted": false,
+                "isSelf": member && typeof member === "object" && member.is_self === true
+            })
+        }
+    }
+
+    onMembersChanged: refreshMembers()
+    Component.onCompleted: refreshMembers()
 
     // 成员、聊天等模型等待会议实时信令填充，入会成功前后都不再写入演示数据。
     ListModel {
         id: memberModel
     }
 
-    // 服务端聊天消息后续追加到该模型；当前允许用户保留仅本机可见的群聊消息。
-    ListModel {
-        id: groupChatModel
+    Connections {
+        target: root.chatController
+
+        function onMessagesChanged() {
+            chatHistory.positionViewAtEnd()
+        }
     }
 
-    ListModel {
-        id: privateChatModel
-    }
-
+    // 成员模型仍等待后续会议成员实时同步，聊天消息由 ChatController 单独维护。
     component ControlButton: Rectangle {
         id: controlButtonRoot
 
@@ -878,13 +900,13 @@ Item {
                 }
 
                 Text {
-                    text: "成员同步后可发起私聊"
+                    text: "选择成员可发起私聊"
                     color: "#64748b"
                     font.pixelSize: 13
                 }
 
                 Item {
-                    visible: !root.hasRealtimeMeetingData
+                    visible: memberModel.count === 0
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
@@ -901,8 +923,10 @@ Item {
 
                     delegate: Rectangle {
                         required property string name
+                        required property string userId
                         required property color color
                         required property bool muted
+                        required property bool isSelf
 
                         Layout.fillWidth: true
                         Layout.preferredHeight: 62
@@ -951,7 +975,7 @@ Item {
                             }
 
                             Button {
-                                visible: index < 3
+                                visible: !isSelf
                                 Layout.preferredWidth: 58
                                 Layout.preferredHeight: 32
                                 text: "私聊"
@@ -971,19 +995,19 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                 }
 
-                                onClicked: root.openPrivateChat(name)
+                                onClicked: root.openPrivateChat(name, userId)
                             }
                         }
                     }
                 }
 
                 Item {
-                    visible: root.hasRealtimeMeetingData
+                    visible: memberModel.count > 0
                     Layout.fillHeight: true
                 }
 
                 Button {
-                    visible: root.hasRealtimeMeetingData
+                    visible: memberModel.count > 0
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
                     text: "打开会议群聊"
@@ -1112,9 +1136,8 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 36
                         radius: 10
-                        color: root.hasRealtimeMeetingData ? "#f5f7fb" : "#f8fafc"
+                        color: "#f5f7fb"
                         border.color: "#e7ebf3"
-                        opacity: root.hasRealtimeMeetingData ? 1 : 0.65
 
                         RowLayout {
                             anchors.fill: parent
@@ -1130,29 +1153,20 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: root.chatScope === "group"
-                                      ? (root.hasRealtimeMeetingData ? "所有人" : "所有人（仅自己可见）")
-                                      : root.privateRecipient
+                                text: root.chatScope === "group" ? "所有人" : root.privateRecipient
                                 color: "#2563eb"
                                 font.pixelSize: 12
                                 font.bold: true
                                 elide: Text.ElideRight
                             }
 
-                            Text {
-                                text: "⌄"
-                                color: "#7b8798"
-                                font.pixelSize: 16
-                            }
                         }
 
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            enabled: root.hasRealtimeMeetingData
-                            onClicked: {
-                                root.chooseChatRecipient()
-                            }
+                            enabled: root.chatScope === "private"
+                            onClicked: root.chooseChatRecipient()
                         }
                     }
                 }
@@ -1166,19 +1180,31 @@ Item {
                     Layout.minimumHeight: 0
                     spacing: 10
                     clip: true
-                    visible: root.hasRealtimeMeetingData || groupChatModel.count > 0
-                    model: root.chatScope === "group" ? groupChatModel : privateChatModel
+                    visible: root.chatController && root.chatController.count > 0
+                    model: root.chatController
 
                     delegate: Rectangle {
-                        required property string name
-                        required property string message
-                        required property string time
+                        required property string senderName
+                        required property string chatType
+                        required property var senderUserId
+                        required property string receiverUserId
+                        required property string content
+                        required property string createdAt
+                        required property string deliveryState
+                        required property bool isMine
 
+                        property bool belongsToCurrentChat: chatType === "group"
+                                                            ? root.chatScope === "group"
+                                                            : root.chatScope === "private" &&
+                                                              (String(senderUserId) === root.privateRecipientId ||
+                                                               receiverUserId === root.privateRecipientId)
+
+                        visible: belongsToCurrentChat
                         width: ListView.view.width
-                        height: messageColumn.implicitHeight + 20
+                        height: belongsToCurrentChat ? messageColumn.implicitHeight + 20 : 0
                         radius: 10
-                        color: name === "我" ? "#e8f0ff" : "#f7f8fa"
-                        border.color: name === "我" ? "#d7e5ff" : "transparent"
+                        color: isMine ? "#e8f0ff" : "#f7f8fa"
+                        border.color: isMine ? "#d7e5ff" : "transparent"
 
                         ColumnLayout {
                             id: messageColumn
@@ -1193,8 +1219,8 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: name === "对方" ? root.privateRecipient : name
-                                    color: name === "我" ? "#2563eb" : "#4f5b6e"
+                                    text: isMine ? "我" : senderName
+                                    color: isMine ? "#2563eb" : "#4f5b6e"
                                     font.pixelSize: 12
                                     font.bold: true
                                     elide: Text.ElideRight
@@ -1202,15 +1228,23 @@ Item {
 
                                 // 每条消息均显示发送时间，避免群聊与私聊信息缺少时序。
                                 Text {
-                                    text: time
+                                    text: createdAt
                                     color: "#98a2b3"
+                                    font.pixelSize: 11
+                                }
+
+                                // 本地消息先显示发送中，服务端拒绝后明确提示失败。
+                                Text {
+                                    visible: isMine && deliveryState !== "sent"
+                                    text: deliveryState === "failed" ? "发送失败" : "发送中"
+                                    color: deliveryState === "failed" ? "#dc2626" : "#98a2b3"
                                     font.pixelSize: 11
                                 }
                             }
 
                             Text {
                                 Layout.fillWidth: true
-                                text: message
+                                text: content
                                 color: "#263247"
                                 font.pixelSize: 13
                                 wrapMode: Text.Wrap
@@ -1220,7 +1254,7 @@ Item {
                 }
 
                 Item {
-                    visible: !root.hasRealtimeMeetingData && groupChatModel.count === 0
+                    visible: !root.chatController || root.chatController.count === 0
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
@@ -1246,10 +1280,11 @@ Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 42
                         placeholderText: root.chatScope === "group"
-                                         ? "向会议群聊发送消息（仅自己可见）"
+                                         ? "向会议群聊发送消息"
                                          : "向 " + root.privateRecipient + " 发送私聊"
                         selectByMouse: true
-                        enabled: root.chatScope === "group"
+                        enabled: root.chatController && !root.isEnded &&
+                                 (root.chatScope === "group" || root.privateRecipientId.length > 0)
                         Keys.onReturnPressed: root.sendChatMessage()
 
                         background: Rectangle {
@@ -1263,7 +1298,9 @@ Item {
                         Layout.preferredWidth: 58
                         Layout.preferredHeight: 42
                         text: "发送"
-                        enabled: root.chatScope === "group" && chatInput.text.trim().length > 0
+                        enabled: root.chatController && !root.isEnded &&
+                                 (root.chatScope === "group" || root.privateRecipientId.length > 0) &&
+                                 chatInput.text.trim().length > 0
                         onClicked: root.sendChatMessage()
 
                         background: Rectangle {
@@ -1284,9 +1321,9 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.hasRealtimeMeetingData
-                          ? "聊天信令已接入后，可在此发送会议群聊或私聊消息。"
-                          : "当前群聊消息仅在本机显示；成员同步后可开启私聊。"
+                    text: root.chatScope === "group"
+                          ? "群聊消息会发送给当前房间成员。"
+                          : "私聊消息仅发送给当前选择的会议成员。"
                     color: "#94a3b8"
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap

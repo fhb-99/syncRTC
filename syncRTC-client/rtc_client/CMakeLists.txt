@@ -65,6 +65,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
         SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
+        SOURCES core/src/controllers/meeting/chatcontroller.h core/src/controllers/meeting/chatcontroller.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -187,6 +188,8 @@ if(BUILD_TESTING)
         core/src/controllers/meeting/profilecontroller.cpp
         core/src/controllers/meeting/meetingcontroller.h
         core/src/controllers/meeting/meetingcontroller.cpp
+        core/src/controllers/meeting/chatcontroller.h
+        core/src/controllers/meeting/chatcontroller.cpp
         core/src/controllers/meeting/realtimecontroller.h
         core/src/controllers/meeting/realtimecontroller.cpp
     )
@@ -219,6 +222,25 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME meetingcontroller_test COMMAND meetingcontroller_test)
+
+    qt_add_executable(chatcontroller_test
+        core/tests/chatcontroller_test.cpp
+        core/src/controllers/meeting/chatcontroller.h
+        core/src/controllers/meeting/chatcontroller.cpp
+        core/src/models/Singleton.h
+        core/src/models/global.h
+        core/src/network/tcpmgr.h
+        core/src/network/tcpmgr.cpp
+    )
+
+    target_link_libraries(chatcontroller_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Gui
+            Qt6::Network
+    )
+
+    add_test(NAME chatcontroller_test COMMAND chatcontroller_test)
 endif()
 
 include(GNUInstallDirs)
