@@ -21,6 +21,72 @@ std::string GenerateMeetingCode()
     return meeting_code;
 }
 
+std::uint32_t NormalizeMessageLimit(std::uint32_t limit)
+{
+    if (limit == 0) {
+        return 50;
+    }
+    return limit > 100 ? 100 : limit;
+}
+
+void FillMeetingMessage(sql::ResultSet& result, MeetingMessageInfo& message)
+{
+    message.message_id = result.getUInt64("id");
+    message.meeting_id = result.getUInt64("meeting_id");
+    message.sender_user_id = result.getInt("sender_user_id");
+    if (result.isNull("receiver_user_id")) {
+        message.receiver_user_id.reset();
+    }
+    else {
+        message.receiver_user_id = result.getUInt64("receiver_user_id");
+    }
+    message.client_msg_id = result.getString("client_msg_id").asStdString();
+    message.content = result.getString("content").asStdString();
+    message.content_type = static_cast<std::uint8_t>(result.getUInt("content_type"));
+    message.created_at = result.getString("created_at").asStdString();
+}
+
+bool LoadMeetingMessageById(sql::Connection* connection,
+                            std::uint64_t message_id,
+                            MeetingMessageInfo& message)
+{
+    std::unique_ptr<sql::PreparedStatement> stmt(connection->prepareStatement(
+        "SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+        "client_msg_id, content, content_type, created_at "
+        "FROM meeting_messages WHERE id = ? LIMIT 1"));
+    stmt->setUInt64(1, message_id);
+
+    std::unique_ptr<sql::ResultSet> result(stmt->executeQuery());
+    if (!result->next()) {
+        return false;
+    }
+
+    FillMeetingMessage(*result, message);
+    return true;
+}
+
+bool LoadMeetingMessageByUniqueKey(sql::Connection* connection,
+                                   MeetingMessageInfo& message)
+{
+    std::unique_ptr<sql::PreparedStatement> stmt(connection->prepareStatement(
+        "SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+        "client_msg_id, content, content_type, created_at "
+        "FROM meeting_messages "
+        "WHERE meeting_id = ? AND sender_user_id = ? AND client_msg_id = ? "
+        "LIMIT 1"));
+    stmt->setUInt64(1, message.meeting_id);
+    stmt->setInt(2, message.sender_user_id);
+    stmt->setString(3, message.client_msg_id);
+
+    std::unique_ptr<sql::ResultSet> result(stmt->executeQuery());
+    if (!result->next()) {
+        return false;
+    }
+
+    FillMeetingMessage(*result, message);
+    return true;
+}
+
 } // namespace
 
 MysqlMgr::MysqlMgr()
@@ -258,8 +324,9 @@ bool MysqlMgr::GetMeetingRecently(int uid, std::vector<RecentMeetingInfo>& meeti
             "JOIN users AS u ON u.id = m.creator_user_id "
             "WHERE mp.user_id = ? "
             "AND mp.participation_status IN (0, 1) "
-            "AND m.status = 0 "
-            "ORDER BY m.scheduled_at ASC, m.created_at DESC "
+            "AND m.status <> 3 "
+            "ORDER BY COALESCE(mp.joined_at, mp.planned_at, m.started_at, m.scheduled_at, m.created_at) DESC, "
+            "COALESCE(m.ended_at, m.started_at, m.scheduled_at, m.created_at) DESC "
             "LIMIT 5"
         ));
 
@@ -788,6 +855,202 @@ bool MysqlMgr::UpdateMeetingPart(const MeetingInfo& meeting, int uid)
         return true;
     }
     catch(const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+bool MysqlMgr::SaveMeetingMessage(MeetingMessageInfo& message)
+{
+    if (!pool_ || message.meeting_id == 0 || message.sender_user_id <= 0 ||
+        message.client_msg_id.empty() || message.client_msg_id.size() > 128 ||
+        message.content.empty() || message.content.size() > 65535 ||
+        (message.receiver_user_id.has_value() &&
+         message.receiver_user_id.value() == 0)) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "INSERT INTO meeting_messages "
+            "(meeting_id, sender_user_id, receiver_user_id, "
+            "client_msg_id, content, content_type) "
+            "VALUES (?, ?, ?, ?, ?, ?)"));
+        pstmt->setUInt64(1, message.meeting_id);
+        pstmt->setInt(2, message.sender_user_id);
+        if (message.receiver_user_id.has_value()) {
+            pstmt->setUInt64(3, message.receiver_user_id.value());
+        }
+        else {
+            // receiver_user_id 为空代表群聊消息；私聊消息必须填目标用户 id。
+            pstmt->setNull(3, sql::DataType::BIGINT);
+        }
+        pstmt->setString(4, message.client_msg_id);
+        pstmt->setString(5, message.content);
+        pstmt->setUInt(6, message.content_type);
+
+        if (pstmt->executeUpdate() != 1) {
+            return false;
+        }
+
+        std::unique_ptr<sql::Statement> id_stmt(con->_con->createStatement());
+        std::unique_ptr<sql::ResultSet> id_result(
+            id_stmt->executeQuery("SELECT LAST_INSERT_ID()"));
+        if (!id_result->next()) {
+            return false;
+        }
+
+        return LoadMeetingMessageById(con->_con.get(),
+                                      id_result->getUInt64(1),
+                                      message);
+    }
+    catch (const sql::SQLException& e) {
+        if (e.getErrorCode() == 1062) {
+            // 客户端或网络层重发同一 client_msg_id 时，返回已落库的消息，
+            // 让上层按成功处理，避免聊天窗口出现重复消息。
+            try {
+                return LoadMeetingMessageByUniqueKey(con->_con.get(), message);
+            }
+            catch (const sql::SQLException& load_error) {
+                std::cerr << "SQLException: " << load_error.what();
+                std::cerr << " (MySQL error code: " << load_error.getErrorCode();
+                std::cerr << ", SQLState: " << load_error.getSQLState() << " )" << std::endl;
+                return false;
+            }
+        }
+
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+bool MysqlMgr::GetMeetingGroupMessages(std::uint64_t meeting_id,
+                                       std::uint64_t before_message_id,
+                                       std::uint32_t limit,
+                                       std::vector<MeetingMessageInfo>& messages)
+{
+    messages.clear();
+    if (!pool_ || meeting_id == 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+            "client_msg_id, content, content_type, created_at "
+            "FROM ("
+            "    SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+            "    client_msg_id, content, content_type, created_at "
+            "    FROM meeting_messages "
+            "    WHERE meeting_id = ? "
+            "    AND receiver_user_id IS NULL "
+            "    AND (? = 0 OR id < ?) "
+            "    ORDER BY id DESC "
+            "    LIMIT ?"
+            ") AS recent_messages "
+            "ORDER BY id ASC"));
+        pstmt->setUInt64(1, meeting_id);
+        pstmt->setUInt64(2, before_message_id);
+        pstmt->setUInt64(3, before_message_id);
+        pstmt->setUInt(4, NormalizeMessageLimit(limit));
+
+        std::unique_ptr<sql::ResultSet> result(pstmt->executeQuery());
+        while (result->next()) {
+            MeetingMessageInfo message;
+            FillMeetingMessage(*result, message);
+            messages.push_back(std::move(message));
+        }
+
+        return true;
+    }
+    catch (const sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what();
+        std::cerr << " (MySQL error code: " << e.getErrorCode();
+        std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+bool MysqlMgr::GetMeetingPrivateMessages(std::uint64_t meeting_id,
+                                         int user_id,
+                                         int peer_user_id,
+                                         std::uint64_t before_message_id,
+                                         std::uint32_t limit,
+                                         std::vector<MeetingMessageInfo>& messages)
+{
+    messages.clear();
+    if (!pool_ || meeting_id == 0 || user_id <= 0 || peer_user_id <= 0 ||
+        user_id == peer_user_id) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+            "client_msg_id, content, content_type, created_at "
+            "FROM ("
+            "    SELECT id, meeting_id, sender_user_id, receiver_user_id, "
+            "    client_msg_id, content, content_type, created_at "
+            "    FROM meeting_messages "
+            "    WHERE meeting_id = ? "
+            "    AND receiver_user_id IS NOT NULL "
+            "    AND ((sender_user_id = ? AND receiver_user_id = ?) "
+            "         OR (sender_user_id = ? AND receiver_user_id = ?)) "
+            "    AND (? = 0 OR id < ?) "
+            "    ORDER BY id DESC "
+            "    LIMIT ?"
+            ") AS recent_messages "
+            "ORDER BY id ASC"));
+        pstmt->setUInt64(1, meeting_id);
+        pstmt->setInt(2, user_id);
+        pstmt->setInt(3, peer_user_id);
+        pstmt->setInt(4, peer_user_id);
+        pstmt->setInt(5, user_id);
+        pstmt->setUInt64(6, before_message_id);
+        pstmt->setUInt64(7, before_message_id);
+        pstmt->setUInt(8, NormalizeMessageLimit(limit));
+
+        std::unique_ptr<sql::ResultSet> result(pstmt->executeQuery());
+        while (result->next()) {
+            MeetingMessageInfo message;
+            FillMeetingMessage(*result, message);
+            messages.push_back(std::move(message));
+        }
+
+        return true;
+    }
+    catch (const sql::SQLException& e) {
         std::cerr << "SQLException: " << e.what();
         std::cerr << " (MySQL error code: " << e.getErrorCode();
         std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;

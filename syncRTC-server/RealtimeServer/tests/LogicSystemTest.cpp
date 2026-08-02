@@ -14,13 +14,9 @@ int main()
     }
 
     auto session = std::make_shared<Session>(sockets[0]);
-    auto message = std::make_shared<LogicNode>();
-    message->session = session;
-    // 这里只验证消息队列和工作线程，不依赖 Redis、MySQL 等外部服务。
-    message->id = 0xFFFF;
-    message->message = "token";
-
-    LogicSystem::GetInstance()->PostMsgToQue(message);
+    session->SetMeetingId(1001);
+    // 断线事件由 CServer 投递；这里验证它能够安全进入 LogicSystem 的工作队列。
+    LogicSystem::GetInstance()->PostSessionDisconnected(session);
 
     ::close(sockets[0]);
     ::close(sockets[1]);

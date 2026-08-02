@@ -34,6 +34,11 @@ public:
     // Session 解出完整帧后，将同一类型的 LogicNode 投递到逻辑队列。
     void PostMsgToQue(std::shared_ptr<LogicNode> message);
 
+    // CServer 发现 TCP 连接关闭后调用。断线清理仍在逻辑线程执行，避免 I/O 线程直接修改会议状态。
+    void PostSessionDisconnected(std::shared_ptr<Session> session);
+    // timerfd 每秒调用一次；超时清理统一进入逻辑线程执行。
+    void PostReconnectTimeoutCheck();
+
 private:
     LogicSystem();
 
@@ -57,6 +62,10 @@ private:
     void LeaveMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void EndMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void SendMeetingMessageHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void GetMeetingGroupMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void GetMeetingPrivateMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void SessionDisconnectedHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void ReconnectTimeoutCheckHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     bool m_stop;
     std::mutex m_mutex;

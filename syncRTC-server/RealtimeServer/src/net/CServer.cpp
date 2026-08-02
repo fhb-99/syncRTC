@@ -1,4 +1,5 @@
 #include "net/CServer.h"
+#include "service/LogicSystem.h"
 
 #include <arpa/inet.h>
 #include <array>
@@ -219,16 +220,30 @@ void CServer::HandleTimer()
         }
         UpdateEpollEvents(client.first, client_events);
     }
+
+    // timerfd 只负责定时触发，会议超时清理由 LogicSystem 的工作线程串行处理。
+    LogicSystem::GetInstance()->PostReconnectTimeoutCheck();
 }
 
 void CServer::CloseClient(int client_fd)
 {
-    if (m_client_fds.erase(client_fd) == 0U) {
+    const auto session_it = m_client_fds.find(client_fd);
+    if (session_it == m_client_fds.end()) {
         return;
     }
 
+    // 关闭 fd 前保留对应的 Session。LogicSystem 通过该对象身份清理会议连接，
+    // 不依赖可能被系统复用的 fd 数字。
+    const std::shared_ptr<Session> session = session_it->second;
+    m_client_fds.erase(session_it);
+
     ::epoll_ctl(m_epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
     ::close(client_fd);
+
+    // 未入会连接不涉及房间状态，无需唤醒逻辑线程。
+    if (session->GetMeetingId() != 0) {
+        LogicSystem::GetInstance()->PostSessionDisconnected(session);
+    }
     std::cout << "客户端已断开，fd=" << client_fd << std::endl;
 }
 
