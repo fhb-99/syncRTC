@@ -147,6 +147,12 @@ Item {
         function onMeetingEnded(meetingId) {
             root.applyMeetingEnded(meetingId)
         }
+
+        // 当前会议收到新人加入通知后，用控制器维护后的完整列表刷新成员面板。
+        function onMeetingMembersChanged(meetingId, members) {
+            if (String(meetingId) === root.activeMeetingId)
+                root.activeMeetingMembers = members
+        }
     }
 
     Connections {
@@ -155,6 +161,15 @@ Item {
         // 发送失败时消息已标记为 failed，这里只补充一次用户可见提示。
         function onMessageSendFailed(clientMsgId, error) {
             root.showToast("发送聊天失败（错误码：" + error + "）")
+        }
+
+        function onGroupHistoryLoadFailed(error) {
+            root.showToast("加载群聊历史失败（错误码：" + error + "）")
+        }
+
+        function onPrivateHistoryLoadFailed(peerUserId, error) {
+            void(peerUserId)
+            root.showToast("加载私聊历史失败（错误码：" + error + "）")
         }
     }
 

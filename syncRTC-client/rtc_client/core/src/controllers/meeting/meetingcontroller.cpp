@@ -70,6 +70,11 @@ QVariantList MeetingController::historyMeetings() const
     return m_historyMeetings;
 }
 
+QVariantList MeetingController::currentMeetingMembers() const
+{
+    return m_currentMeetingMembers;
+}
+
 void MeetingController::requestJoinMeeting(const QString &meetingCode)
 {
     const QString code = meetingCode.trimmed();
@@ -334,8 +339,11 @@ bool MeetingController::applyJoinMeetingResponse(const QJsonObject &json)
     }
 
     m_pendingJoinMeetingCode.clear();
+    m_currentMeetingId = meetingId;
+    m_currentMeetingMembers = membersValue.toArray().toVariantList();
+    emit meetingMembersChanged(m_currentMeetingId, m_currentMeetingMembers);
     emit joinMeetingSucceeded(meetingCode, meetingId, status, role,
-                              membersValue.toArray().toVariantList());
+                              m_currentMeetingMembers);
     return true;
 }
 
@@ -391,7 +399,134 @@ bool MeetingController::applyLeaveMeetingResponse(const QJsonObject &json)
     }
 
     m_pendingLeaveMeetingId.clear();
+    if (m_currentMeetingId == meetingId) {
+        m_currentMeetingId.clear();
+        m_currentMeetingMembers.clear();
+    }
     emit leaveMeetingSucceeded(meetingId);
+    return true;
+}
+
+bool MeetingController::applyMeetingMemberJoined(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QJsonValue memberValue = json.value("member");
+    if (meetingId.isEmpty() || !memberValue.isObject()) {
+        return false;
+    }
+
+    // 当前客户端只渲染一场会议，其他会议的广播不影响正在展示的成员列表。
+    if (meetingId != m_currentMeetingId) {
+        return true;
+    }
+
+    QVariantMap member = memberValue.toObject().toVariantMap();
+    const QString userId = member.value("user_id").toString().trimmed();
+    if (userId.isEmpty() || member.value("name").toString().trimmed().isEmpty()) {
+        return false;
+    }
+
+    // 同一用户多设备入会时，服务端不会广播；这里仍做去重，防止网络重放导致 QML 出现重复成员。
+    for (const QVariant &item : m_currentMeetingMembers) {
+        if (item.toMap().value("user_id").toString() == userId) {
+            return true;
+        }
+    }
+
+    m_currentMeetingMembers.append(member);
+    emit meetingMembersChanged(meetingId, m_currentMeetingMembers);
+    return true;
+}
+
+bool MeetingController::applyMeetingMemberLeft(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString userId = json.value("user_id").toVariant().toString().trimmed();
+    if (meetingId.isEmpty() || userId.isEmpty()) {
+        return false;
+    }
+
+    // 当前客户端只维护正在展示的会议；其他会议的离会通知可直接忽略。
+    if (meetingId != m_currentMeetingId) {
+        return true;
+    }
+
+    for (int index = 0; index < m_currentMeetingMembers.size(); ++index) {
+        if (m_currentMeetingMembers.at(index).toMap().value("user_id").toString() != userId) {
+            continue;
+        }
+
+        m_currentMeetingMembers.removeAt(index);
+        emit meetingMembersChanged(meetingId, m_currentMeetingMembers);
+        break;
+    }
+
+    // 未找到时也视为成功，允许客户端安全处理重复推送或乱序到达。
+    return true;
+}
+
+bool MeetingController::applyMeetingMemberReconnecting(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString userId = json.value("user_id").toVariant().toString().trimmed();
+    const QString roomState = json.value("room_state").toString().trimmed().toLower();
+    if (meetingId.isEmpty() || userId.isEmpty() || roomState != QStringLiteral("reconnecting")) {
+        return false;
+    }
+
+    // 断线用户仍属于会议成员，QML 只需把该成员展示为“重连中”。
+    if (meetingId != m_currentMeetingId) {
+        return true;
+    }
+
+    for (int index = 0; index < m_currentMeetingMembers.size(); ++index) {
+        QVariantMap member = m_currentMeetingMembers.at(index).toMap();
+        if (member.value("user_id").toString() != userId) {
+            continue;
+        }
+
+        // 重复推送不重复刷新，保证该通知可安全重放。
+        if (member.value("room_state").toString() == roomState) {
+            return true;
+        }
+
+        member.insert("room_state", roomState);
+        m_currentMeetingMembers[index] = member;
+        emit meetingMembersChanged(meetingId, m_currentMeetingMembers);
+        return true;
+    }
+
+    // 成员列表可能比推送更晚到达；此时忽略即可，后续入会快照会给出完整状态。
+    return true;
+}
+
+bool MeetingController::applyMeetingMemberReconnected(const QJsonObject &json)
+{
+    const QString meetingId = json.value("meeting_id").toVariant().toString().trimmed();
+    const QString userId = json.value("user_id").toVariant().toString().trimmed();
+    const QString roomState = json.value("room_state").toString().trimmed().toLower();
+    if (meetingId.isEmpty() || userId.isEmpty() || roomState != QStringLiteral("active")) {
+        return false;
+    }
+    if (meetingId != m_currentMeetingId) {
+        return true;
+    }
+
+    for (int index = 0; index < m_currentMeetingMembers.size(); ++index) {
+        QVariantMap member = m_currentMeetingMembers.at(index).toMap();
+        if (member.value("user_id").toString() != userId) {
+            continue;
+        }
+        if (member.value("room_state").toString() == roomState) {
+            return true;
+        }
+
+        member.insert("room_state", roomState);
+        m_currentMeetingMembers[index] = member;
+        emit meetingMembersChanged(meetingId, m_currentMeetingMembers);
+        return true;
+    }
+
     return true;
 }
 

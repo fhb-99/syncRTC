@@ -104,6 +104,13 @@ void TcpMgr::initHandlers()
     m_handlers.insert(ID_MEETING_ENDED, forwardJsonResponse);
     m_handlers.insert(ID_SEND_MEETING_MESSAGE_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_MEETING_MESSAGE_PUSH, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_MEMBER_JOINED, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_MEMBER_LEFT, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_MEMBER_RECONNECTING, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_MEMBER_RECONNECTED, forwardJsonResponse);
+    m_handlers.insert(ID_MEETING_MEMBER_TIMEOUT_LEFT, forwardJsonResponse);
+    m_handlers.insert(ID_GET_MEETING_GROUP_MESSAGES_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

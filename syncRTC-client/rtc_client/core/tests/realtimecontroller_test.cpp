@@ -134,6 +134,97 @@ private slots:
                  static_cast<int>(ErrorCodes::ERROR_MEETING_FULL));
     }
 
+    void memberJoinedNotificationUpdatesCurrentMeetingMembers()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        MeetingController *meetingController = realtimeController.meetingController();
+        QSignalSpy membersChangedSpy(meetingController, &MeetingController::meetingMembersChanged);
+
+        meetingController->requestJoinMeeting(QStringLiteral("75231032"));
+        realtimeController.slot_message_recv(ID_JOIN_MEETING_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"meeting_code", "75231032"},
+            {"status", "scheduled"},
+            {"role", "participant"},
+            {"members", QJsonArray{QJsonObject{
+                {"user_id", 1}, {"name", "当前用户"}, {"is_self", true},
+            }}},
+        });
+        membersChangedSpy.clear();
+
+        const QJsonObject notification{
+            {"meeting_id", "100001"},
+            {"member", QJsonObject{
+                {"user_id", 2}, {"name", "新成员"}, {"is_self", false},
+            }},
+        };
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_JOINED, notification);
+
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().size(), 2);
+        QCOMPARE(meetingController->currentMeetingMembers().at(1).toMap().value("user_id").toString(),
+                 QStringLiteral("2"));
+
+        // 重复推送不应让同一成员在客户端列表中出现两次。
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_JOINED, notification);
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().size(), 2);
+
+        membersChangedSpy.clear();
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_RECONNECTING, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+            {"room_state", "reconnecting"},
+        });
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().at(1).toMap().value("room_state").toString(),
+                 QStringLiteral("reconnecting"));
+
+        // 重复的重连中通知不应产生额外 UI 刷新。
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_RECONNECTING, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+            {"room_state", "reconnecting"},
+        });
+        QCOMPARE(membersChangedSpy.count(), 1);
+
+        membersChangedSpy.clear();
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_RECONNECTED, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+            {"room_state", "active"},
+        });
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().at(1).toMap().value("room_state").toString(),
+                 QStringLiteral("active"));
+
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_RECONNECTING, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+            {"room_state", "reconnecting"},
+        });
+        QCOMPARE(membersChangedSpy.count(), 2);
+
+        membersChangedSpy.clear();
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_TIMEOUT_LEFT, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+        });
+
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().size(), 1);
+
+        // 重复或乱序的离会通知不应影响当前成员列表。
+        realtimeController.slot_message_recv(ID_MEETING_MEMBER_LEFT, QJsonObject{
+            {"meeting_id", "100001"},
+            {"user_id", 2},
+        });
+        QCOMPARE(membersChangedSpy.count(), 1);
+        QCOMPARE(meetingController->currentMeetingMembers().size(), 1);
+    }
+
     void startMeetingResponseAndNotificationReachMeetingController()
     {
         CurrentUserState currentUser;
@@ -242,6 +333,70 @@ private slots:
         QCOMPARE(chatController->rowCount(), 2);
         QCOMPARE(chatController->data(chatController->index(1, 0), ChatController::ContentRole).toString(),
                  QStringLiteral("大家好"));
+    }
+
+    void groupHistoryResponseReachesChatController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        ChatController *chatController = realtimeController.chatController();
+        chatController->setActiveMeetingId("100001");
+
+        realtimeController.slot_message_recv(ID_GET_MEETING_GROUP_MESSAGES_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"messages", QJsonArray{
+                QJsonObject{
+                    {"message_id", "21"},
+                    {"client_msg_id", "history-group-1"},
+                    {"meeting_id", "100001"},
+                    {"chat_type", "group"},
+                    {"sender_user_id", 8},
+                    {"sender_name", "tester"},
+                    {"receiver_user_id", QJsonValue(QJsonValue::Null)},
+                    {"content", "history message"},
+                    {"created_at", "2026-08-02 10:35:00.000"},
+                    {"is_mine", false},
+                },
+            }},
+        });
+
+        QCOMPARE(chatController->rowCount(), 1);
+        QCOMPARE(chatController->data(chatController->index(0, 0), ChatController::ContentRole).toString(),
+                 QStringLiteral("history message"));
+    }
+
+    void privateHistoryResponseReachesChatController()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        ChatController *chatController = realtimeController.chatController();
+        chatController->setActiveMeetingId("100001");
+
+        realtimeController.slot_message_recv(ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"peer_user_id", 9},
+            {"limit", 50},
+            {"messages", QJsonArray{
+                QJsonObject{
+                    {"message_id", "22"},
+                    {"client_msg_id", "history-private-1"},
+                    {"meeting_id", "100001"},
+                    {"chat_type", "private"},
+                    {"sender_user_id", 9},
+                    {"sender_name", "tester"},
+                    {"receiver_user_id", 6},
+                    {"content", "private history message"},
+                    {"created_at", "2026-08-02 10:36:00.000"},
+                    {"is_mine", false},
+                },
+            }},
+        });
+
+        QCOMPARE(chatController->rowCount(), 1);
+        QCOMPARE(chatController->data(chatController->index(0, 0), ChatController::ContentRole).toString(),
+                 QStringLiteral("private history message"));
     }
 
     void historyMeetingResponseKeepsRecentMeetingsIntact()

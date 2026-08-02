@@ -1,5 +1,7 @@
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QSignalSpy>
+#include <QDateTime>
 #include <QtTest>
 
 #include "../src/controllers/meeting/chatcontroller.h"
@@ -48,6 +50,63 @@ private slots:
         const QModelIndex first = controller.index(0, 0);
         QCOMPARE(controller.data(first, ChatController::DeliveryStateRole).toString(), QStringLiteral("sending"));
         QVERIFY(controller.data(first, ChatController::IsMineRole).toBool());
+    }
+
+    void groupHistoryRequestSendsMeetingScope()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        QSignalSpy sendDataSpy(TcpMgr::GetInstance().get(), &TcpMgr::signal_send_data);
+
+        controller.requestGroupHistory("100001", QString(), 50);
+
+        QCOMPARE(sendDataSpy.count(), 1);
+        const QList<QVariant> arguments = sendDataSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toInt(),
+                 static_cast<int>(ID_GET_MEETING_GROUP_MESSAGES_REQUEST));
+        const QJsonObject request =
+            QJsonDocument::fromJson(arguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value("meeting_id").toString(), QStringLiteral("100001"));
+        QCOMPARE(request.value("before_message_id").toInteger(), 0);
+        QCOMPARE(request.value("limit").toInt(), 50);
+    }
+
+    void genericHistoryRequestUsesCurrentConversationCursor()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        QSignalSpy sendDataSpy(TcpMgr::GetInstance().get(), &TcpMgr::signal_send_data);
+
+        controller.requestHistory("100001", "group", QString(), "12", 30);
+
+        QCOMPARE(sendDataSpy.count(), 1);
+        const QList<QVariant> arguments = sendDataSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toInt(),
+                 static_cast<int>(ID_GET_MEETING_GROUP_MESSAGES_REQUEST));
+        const QJsonObject request =
+            QJsonDocument::fromJson(arguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value("before_message_id").toInteger(), 12);
+        QCOMPARE(request.value("limit").toInt(), 30);
+    }
+
+    void privateHistoryRequestSendsPeerScope()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        QSignalSpy sendDataSpy(TcpMgr::GetInstance().get(), &TcpMgr::signal_send_data);
+
+        controller.requestHistory("100001", "private", "9", "18", 40);
+
+        QCOMPARE(sendDataSpy.count(), 1);
+        const QList<QVariant> arguments = sendDataSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toInt(),
+                 static_cast<int>(ID_GET_MEETING_PRIVATE_MESSAGES_REQUEST));
+        const QJsonObject request =
+            QJsonDocument::fromJson(arguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value("meeting_id").toString(), QStringLiteral("100001"));
+        QCOMPARE(request.value("peer_user_id").toInteger(), 9);
+        QCOMPARE(request.value("before_message_id").toInteger(), 18);
+        QCOMPARE(request.value("limit").toInt(), 40);
     }
 
     void successAckMarksLocalMessageSent()
@@ -100,6 +159,48 @@ private slots:
         QVERIFY(!controller.data(first, ChatController::IsMineRole).toBool());
     }
 
+    void groupHistoryResponseAddsPersistedMessages()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        QSignalSpy loadedSpy(&controller, &ChatController::historyMessagesLoaded);
+        QDateTime expectedTime = QDateTime::fromString(
+            QStringLiteral("2026-08-02 10:30:00.000"),
+            QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+        expectedTime.setTimeSpec(Qt::UTC);
+
+        QVERIFY(controller.applyGroupHistoryResponse(QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"limit", 50},
+            {"messages", QJsonArray{
+                QJsonObject{
+                    {"message_id", "11"},
+                    {"client_msg_id", "history-1"},
+                    {"meeting_id", "100001"},
+                    {"chat_type", "group"},
+                    {"sender_user_id", 7},
+                    {"sender_name", "tester"},
+                    {"receiver_user_id", QJsonValue(QJsonValue::Null)},
+                    {"content", "hello"},
+                    {"created_at", "2026-08-02 10:30:00.000"},
+                    {"is_mine", false},
+                },
+            }},
+        }));
+
+        QCOMPARE(controller.rowCount(), 1);
+        QCOMPARE(controller.data(controller.index(0, 0), ChatController::ContentRole).toString(),
+                 QStringLiteral("hello"));
+        QCOMPARE(controller.data(controller.index(0, 0), ChatController::DeliveryStateRole).toString(),
+                 QStringLiteral("sent"));
+        QCOMPARE(controller.data(controller.index(0, 0), ChatController::CreatedAtRole).toString(),
+                 expectedTime.toLocalTime().toString(QStringLiteral("HH:mm")));
+        QCOMPARE(controller.earliestMessageId("group"), QStringLiteral("11"));
+        QCOMPARE(loadedSpy.count(), 1);
+        QCOMPARE(loadedSpy.takeFirst().at(2).toInt(), 1);
+    }
+
     void privateMessageSendsTargetAndMarksSent()
     {
         ChatController controller;
@@ -127,6 +228,44 @@ private slots:
 
         QCOMPARE(controller.data(controller.index(0, 0), ChatController::DeliveryStateRole).toString(),
                  QStringLiteral("sent"));
+    }
+
+    void privateHistoryResponseAddsPersistedMessages()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        QSignalSpy loadedSpy(&controller, &ChatController::historyMessagesLoaded);
+
+        QVERIFY(controller.applyPrivateHistoryResponse(QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"meeting_id", "100001"},
+            {"peer_user_id", 9},
+            {"limit", 50},
+            {"messages", QJsonArray{
+                QJsonObject{
+                    {"message_id", "19"},
+                    {"client_msg_id", "private-history-1"},
+                    {"meeting_id", "100001"},
+                    {"chat_type", "private"},
+                    {"sender_user_id", 9},
+                    {"sender_name", "peer"},
+                    {"receiver_user_id", 6},
+                    {"content", "private hello"},
+                    {"created_at", "2026-08-02 11:00:00.000"},
+                    {"is_mine", false},
+                },
+            }},
+        }));
+
+        QCOMPARE(controller.rowCount(), 1);
+        QCOMPARE(controller.data(controller.index(0, 0), ChatController::ContentRole).toString(),
+                 QStringLiteral("private hello"));
+        QCOMPARE(controller.earliestMessageId("private", "9"), QStringLiteral("19"));
+        QCOMPARE(loadedSpy.count(), 1);
+        const QList<QVariant> arguments = loadedSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toString(), QStringLiteral("private"));
+        QCOMPARE(arguments.at(1).toString(), QStringLiteral("9"));
+        QCOMPARE(arguments.at(2).toInt(), 1);
     }
 };
 

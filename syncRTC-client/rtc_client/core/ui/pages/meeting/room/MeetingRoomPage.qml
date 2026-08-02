@@ -23,6 +23,14 @@ Item {
     property string privateRecipient: ""
     property string privateRecipientId: ""
     property bool emojiPickerVisible: false
+    readonly property int chatHistoryPageSize: 50
+    property bool loadingOlderMessages: false
+    property bool allowTopHistoryLoad: false
+    property bool groupHasMoreHistory: true
+    property var privateHasMoreHistory: ({})
+    property bool chatHadMessagesBeforeInitialLoad: false
+    property real historyContentHeightBeforeLoad: 0
+    property real historyContentYBeforeLoad: 0
     readonly property bool isHost: role === "host" || role === "co_host" || role === "creator"
     readonly property bool isScheduled: status === "scheduled"
     readonly property bool isInProgress: status === "in_progress"
@@ -81,12 +89,86 @@ Item {
         root.endMeetingRequested(root.meetingId)
     }
 
+    function currentChatPeerId() {
+        return chatScope === "private" ? privateRecipientId : ""
+    }
+
+    function hasMoreHistoryForCurrentChat() {
+        if (chatScope === "group")
+            return groupHasMoreHistory
+
+        if (privateRecipientId.length === 0)
+            return false
+
+        return privateHasMoreHistory[privateRecipientId] !== false
+    }
+
+    function setHasMoreHistory(chatType, peerUserId, hasMore) {
+        if (chatType === "group") {
+            groupHasMoreHistory = hasMore
+            return
+        }
+
+        // 私聊按对方 user_id 单独保存是否还有更多历史，避免 A 聊天到底影响 B 聊天继续加载。
+        var updated = ({})
+        for (var key in privateHasMoreHistory)
+            updated[key] = privateHasMoreHistory[key]
+        updated[String(peerUserId)] = hasMore
+        privateHasMoreHistory = updated
+    }
+
+    function requestChatHistory(beforeMessageId, older) {
+        if (!root.chatController || root.meetingId.length === 0)
+            return
+        if (older && (loadingOlderMessages || !hasMoreHistoryForCurrentChat()))
+            return
+
+        if (older) {
+            loadingOlderMessages = true
+            allowTopHistoryLoad = false
+            historyContentHeightBeforeLoad = chatHistory.contentHeight
+            historyContentYBeforeLoad = chatHistory.contentY
+        } else {
+            chatHadMessagesBeforeInitialLoad =
+                    root.chatController.earliestMessageId(
+                        chatScope, currentChatPeerId()).length > 0
+        }
+
+        root.chatController.requestHistory(
+                    root.meetingId,
+                    chatScope,
+                    currentChatPeerId(),
+                    beforeMessageId || "",
+                    chatHistoryPageSize)
+    }
+
+    function requestOlderChatHistory() {
+        if (!root.chatController)
+            return
+
+        var beforeMessageId = root.chatController.earliestMessageId(
+                    chatScope, currentChatPeerId())
+        if (String(beforeMessageId).length === 0)
+            return
+
+        requestChatHistory(String(beforeMessageId), true)
+    }
+
+    function maybeLoadOlderChatHistory() {
+        if (!allowTopHistoryLoad || sidePanelMode !== "chat" || chatHistory.contentY > 24)
+            return
+
+        requestOlderChatHistory()
+    }
+
     function openGroupChat() {
         chatScope = "group"
         privateRecipient = ""
         privateRecipientId = ""
         emojiPickerVisible = false
         sidePanelMode = "chat"
+        allowTopHistoryLoad = false
+        requestChatHistory("", false)
     }
 
     function openPrivateChat(memberName, memberId) {
@@ -98,6 +180,8 @@ Item {
         privateRecipientId = String(memberId)
         emojiPickerVisible = false
         sidePanelMode = "chat"
+        allowTopHistoryLoad = false
+        requestChatHistory("", false)
     }
 
     function openMembersPanel() {
@@ -114,7 +198,7 @@ Item {
     }
 
     function openChatPanel() {
-        sidePanelMode = "chat"
+        openGroupChat()
     }
 
     function closeSidePanel() {
@@ -161,12 +245,20 @@ Item {
                 "name": memberName,
                 "color": "#2563eb",
                 "muted": false,
+                "roomState": member && typeof member === "object" && member.room_state === "reconnecting"
+                             ? "reconnecting" : "active",
                 "isSelf": member && typeof member === "object" && member.is_self === true
             })
         }
     }
 
     onMembersChanged: refreshMembers()
+    onMeetingIdChanged: {
+        loadingOlderMessages = false
+        allowTopHistoryLoad = false
+        groupHasMoreHistory = true
+        privateHasMoreHistory = ({})
+    }
     Component.onCompleted: refreshMembers()
 
     // 成员、聊天等模型等待会议实时信令填充，入会成功前后都不再写入演示数据。
@@ -178,7 +270,45 @@ Item {
         target: root.chatController
 
         function onMessagesChanged() {
-            chatHistory.positionViewAtEnd()
+            if (!root.loadingOlderMessages) {
+                Qt.callLater(function() {
+                    chatHistory.positionViewAtEnd()
+                    root.allowTopHistoryLoad = true
+                })
+            }
+        }
+
+        function onHistoryMessagesLoaded(chatType, peerUserId, addedCount, hasMore) {
+            var sameChat = chatType === root.chatScope &&
+                    (chatType === "group" || String(peerUserId) === root.privateRecipientId)
+            if (!sameChat)
+                return
+
+            if (!root.loadingOlderMessages) {
+                if (addedCount > 0 || !root.chatHadMessagesBeforeInitialLoad)
+                    root.setHasMoreHistory(chatType, String(peerUserId), hasMore)
+                root.allowTopHistoryLoad = true
+                return
+            }
+
+            root.setHasMoreHistory(chatType, String(peerUserId), hasMore && addedCount > 0)
+            var oldHeight = root.historyContentHeightBeforeLoad
+            var oldY = root.historyContentYBeforeLoad
+            root.loadingOlderMessages = false
+
+            // 历史消息是插到模型前面的。恢复 contentY 可以让用户继续停在原来的阅读位置，
+            // 视觉上就是“往上滚动加载出更早消息”，而不是突然跳到底部或跳到列表开头。
+            Qt.callLater(function() {
+                var delta = Math.max(0, chatHistory.contentHeight - oldHeight)
+                chatHistory.contentY = Math.max(0, oldY + delta)
+                root.allowTopHistoryLoad = true
+            })
+        }
+
+        function onGroupHistoryLoadFailed(error) {
+            void(error)
+            root.loadingOlderMessages = false
+            root.allowTopHistoryLoad = true
         }
     }
 
@@ -541,11 +671,12 @@ Item {
                         required property string name
                         required property color color
                         required property bool muted
+                        required property string roomState
 
                         width: Math.max(130, (parent.width - 42) / 4)
                         height: parent.height
                         radius: 14
-                        color: color
+                        color: roomState === "reconnecting" ? "#64748b" : color
 
                         Rectangle {
                             width: 54
@@ -578,7 +709,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.left: parent.left
                                 anchors.leftMargin: 10
-                                text: name
+                                text: roomState === "reconnecting" ? name + " · 重连中" : name
                                 color: "#ffffff"
                                 font.pixelSize: 12
                             }
@@ -927,6 +1058,7 @@ Item {
                         required property color color
                         required property bool muted
                         required property bool isSelf
+                        required property string roomState
 
                         Layout.fillWidth: true
                         Layout.preferredHeight: 62
@@ -968,8 +1100,8 @@ Item {
                                 }
 
                                 Text {
-                                    text: muted ? "已静音" : "会议中"
-                                    color: muted ? "#ef4444" : "#16a34a"
+                                    text: roomState === "reconnecting" ? "重连中" : (muted ? "已静音" : "会议中")
+                                    color: roomState === "reconnecting" ? "#d97706" : (muted ? "#ef4444" : "#16a34a")
                                     font.pixelSize: 12
                                 }
                             }
@@ -1182,6 +1314,20 @@ Item {
                     clip: true
                     visible: root.chatController && root.chatController.count > 0
                     model: root.chatController
+                    onContentYChanged: root.maybeLoadOlderChatHistory()
+
+                    header: Item {
+                        width: chatHistory.width
+                        height: root.loadingOlderMessages ? 32 : 0
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: root.loadingOlderMessages
+                            text: "正在加载更早消息"
+                            color: "#94a3b8"
+                            font.pixelSize: 12
+                        }
+                    }
 
                     delegate: Rectangle {
                         required property string senderName
@@ -1429,7 +1575,7 @@ Item {
             label: "聊天"
             iconText: "☰"
             selected: root.sidePanelMode === "chat"
-            onTriggered: root.sidePanelMode = root.sidePanelMode === "chat" ? "" : "chat"
+            onTriggered: root.sidePanelMode === "chat" ? root.closeSidePanel() : root.openGroupChat()
         }
 
         ControlButton {
