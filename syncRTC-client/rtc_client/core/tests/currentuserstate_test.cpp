@@ -11,14 +11,18 @@ private slots:
     void profilePropertiesNotifyQmlBindings()
     {
         CurrentUserState currentUser;
+        QSignalSpy uidSpy(&currentUser, &CurrentUserState::uidChanged);
         QSignalSpy usernameSpy(&currentUser, &CurrentUserState::usernameChanged);
         QSignalSpy emailSpy(&currentUser, &CurrentUserState::emailChanged);
 
+        currentUser.setUid(42);
         currentUser.setUsername("\u6d4b\u8bd5\u7528\u6237");
         currentUser.setEmail("tester@example.com");
 
+        QCOMPARE(currentUser.property("uid").toInt(), 42);
         QCOMPARE(currentUser.property("username").toString(), QStringLiteral("\u6d4b\u8bd5\u7528\u6237"));
         QCOMPARE(currentUser.property("email").toString(), QStringLiteral("tester@example.com"));
+        QCOMPARE(uidSpy.count(), 1);
         QCOMPARE(usernameSpy.count(), 1);
         QCOMPARE(emailSpy.count(), 1);
     }

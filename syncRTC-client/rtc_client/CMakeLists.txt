@@ -66,6 +66,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
         SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
         SOURCES core/src/controllers/meeting/chatcontroller.h core/src/controllers/meeting/chatcontroller.cpp
+        SOURCES core/src/controllers/contacts/contactscontroller.h core/src/controllers/contacts/contactscontroller.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -241,6 +242,26 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME chatcontroller_test COMMAND chatcontroller_test)
+
+    qt_add_executable(contactscontroller_test
+        core/tests/contactscontroller_test.cpp
+        core/src/controllers/contacts/contactscontroller.h
+        core/src/controllers/contacts/contactscontroller.cpp
+        core/src/models/Singleton.h
+        core/src/models/currentuserstate.h
+        core/src/models/currentuserstate.cpp
+        core/src/models/global.h
+        core/src/network/httpmgr.h
+        core/src/network/httpmgr.cpp
+    )
+
+    target_link_libraries(contactscontroller_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Network
+    )
+
+    add_test(NAME contactscontroller_test COMMAND contactscontroller_test)
 endif()
 
 include(GNUInstallDirs)

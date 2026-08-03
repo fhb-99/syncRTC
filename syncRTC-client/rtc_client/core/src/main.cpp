@@ -6,6 +6,7 @@
 #include <QSettings>
 
 #include "controllers/auth/AuthController.h"
+#include "controllers/contacts/contactscontroller.h"
 #include "controllers/meeting/realtimecontroller.h"
 #include "models/currentuserstate.h"
 #include "models/deviceidstore.h"
@@ -56,11 +57,18 @@ int main(int argc, char *argv[])
 
     CurrentUserState currentUser;
     RealtimeController realtimeController(&currentUser);
+    ContactsController contactsController(&currentUser);
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);
     engine.rootContext()->setContextProperty("meetingController", realtimeController.meetingController());
     engine.rootContext()->setContextProperty("chatController", realtimeController.chatController());
+    engine.rootContext()->setContextProperty("contactsController", &contactsController);
+
+    QObject::connect(authController.GetLoginControll(), &LoginController::signal_connect_tcp,
+                     &currentUser, [&currentUser](const ServerInfo &server) {
+                         currentUser.setUid(server.uid);
+                     });
 
     QObject::connect(
         &engine,

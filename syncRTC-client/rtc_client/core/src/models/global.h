@@ -10,6 +10,10 @@ enum RequestID {
     ID_REISTER_USER = 1001,
     ID_RESET_USER = 1002,
     ID_LOGIN_USER = 1003,
+    ID_GET_CONTACTS = 1004, // 获取联系人的在线状态
+    ID_SEARCH_CONTACTS = 1005, // 搜索联系人
+    ID_ADD_CONTACT = 1006,     // 单向添加联系人
+    ID_DELETE_CONTACT = 1007,  // 单向删除联系人
     AUTH_LOGIN_REQUEST = 1010,
     AUTH_LOGIN_RESPONSE = 1011,
     ID_CREATE_MEETING_REQUEST = 1012,
@@ -64,7 +68,8 @@ enum ErrorCodes
 enum Modules {
     LOGIN_MOD = 1,
     REGISTER_MOD = 2,
-    RESET_MOD = 3
+    RESET_MOD = 3,
+    CONTACTS_MOD = 4
 };
 
 // RAII，保证资源安全释放
