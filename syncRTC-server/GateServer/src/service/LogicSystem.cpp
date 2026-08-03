@@ -431,6 +431,83 @@ LogicSystem::LogicSystem()
         return true;
     });
 
+    RegisterGet("/get_contacts", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        // 从redis当中通过token获得uid
+        const std::string session_token = src_root["session_token"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        int uid;
+        if(!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+            root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                    ? ErrorCodes::ERROR_SESSION_INVALID
+                                    : ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if (!RedisMgr::GetInstance()->IsConnected()) {
+            root["error"] = ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        std::vector<ContactInfo> contacts;
+        if (!MysqlMgr::GetInstance()->GetContactListByUid(uid, contacts)) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        Json::Value contact_array(Json::arrayValue);
+        for (const auto& contact : contacts) {
+            const std::string presence_key = "presence:" + std::to_string(contact.uid);
+            std::string status = RedisMgr::GetInstance()->HGet(presence_key, "status");
+            const std::string meeting_id = RedisMgr::GetInstance()->HGet(presence_key, "meeting_id");
+            if (status.empty()) {
+                status = "offline";
+            }
+            if (!meeting_id.empty()) {
+                status = "in_meeting";
+            }
+
+            Json::Value item;
+            item["uid"] = contact.uid;
+            item["username"] = contact.username;
+            item["email"] = contact.email;
+            item["display_name"] = contact.display_name;
+            item["alias"] = contact.alias;
+            item["remark"] = contact.remark;
+            item["relation_status"] = contact.relation_status;
+            // 关系和资料来自 MySQL，在线/会议状态只读 Realtime 写入的 Redis presence。
+            item["status"] = status;
+            contact_array.append(item);
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["contacts"] = contact_array;
+        root["count"] = static_cast<int>(contacts.size());
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+        return true;
+    });
+
 
     RegisterPost("/reset_pwd", [](std::shared_ptr<HttpConnection> connection){
         auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());

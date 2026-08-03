@@ -241,3 +241,59 @@ bool MysqlMgr::GetUserInfoByUid(int uid, UserInfo& user)
         return false;
     }
 }
+
+bool MysqlMgr::GetContactListByUid(int uid, std::vector<ContactInfo>& contacts)
+{
+    contacts.clear();
+    if (!pool_ || uid <= 0) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "SELECT "
+            "u.id AS contact_uid, "
+            "u.username, "
+            "u.email, "
+            "COALESCE(NULLIF(u.display_name, ''), u.username) AS display_name, "
+            "COALESCE(uc.alias, '') AS alias, "
+            "COALESCE(uc.remark, '') AS remark, "
+            "uc.relation_status "
+            "FROM user_contacts uc "
+            "INNER JOIN users u ON u.id = uc.contact_user_id "
+            "WHERE uc.user_id = ? AND uc.relation_status = 1 "
+            "ORDER BY uc.updated_at DESC, uc.created_at DESC"));
+        pstmt->setInt(1, uid);
+
+        std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());
+        while (res->next()) {
+            ContactInfo contact;
+            contact.uid = res->getInt("contact_uid");
+            contact.username = res->getString("username").asStdString();
+            contact.email = res->getString("email").asStdString();
+            contact.display_name = res->getString("display_name").asStdString();
+            contact.alias = res->getString("alias").asStdString();
+            contact.remark = res->getString("remark").asStdString();
+            contact.relation_status = res->getInt("relation_status");
+            contacts.push_back(std::move(contact));
+        }
+
+        return true;
+    }
+    catch (sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what()
+                  << " (MySQL error code: " << e.getErrorCode()
+                  << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        contacts.clear();
+        return false;
+    }
+}
