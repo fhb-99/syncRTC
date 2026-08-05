@@ -8,16 +8,10 @@ Item {
     id: root
 
     signal demonstrationAction(string message)
+    signal contactsPageEntered()
 
-    // 以下联系人仅用于当前 UI 展示，后续由 UserService 的真实联系人数据替换。
-    ListModel {
-        id: contactsModel
-
-        ListElement { name: "林秋"; role: "产品经理"; status: "在线"; statusColor: "#16a34a" }
-        ListElement { name: "周言"; role: "客户端工程师"; status: "忙碌"; statusColor: "#f59e0b" }
-        ListElement { name: "陈默"; role: "服务端工程师"; status: "在线"; statusColor: "#16a34a" }
-        ListElement { name: "何清"; role: "交互设计师"; status: "离线"; statusColor: "#94a3b8" }
-    }
+    // 页面切入后仅通知联系人控制器，网络加载逻辑不放在 QML 中。
+    onContactsPageEntered: contactsController.onContactsPageEntered()
 
     Rectangle {
         anchors.fill: parent
@@ -127,7 +121,7 @@ Item {
                     Item { Layout.fillWidth: true }
 
                     Text {
-                        text: "4 位联系人"
+                        text: contactsList.count + " 位联系人"
                         color: "#64748b"
                         font.pixelSize: 13
                     }
@@ -139,7 +133,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    model: contactsModel
+                    model: contactsController.contacts
                     spacing: 10
 
                     delegate: contactCard
@@ -173,10 +167,12 @@ Item {
         Rectangle {
             id: contactCardRoot
 
-            required property string name
-            required property string role
-            required property string status
-            required property color statusColor
+            required property var modelData
+            property var contactData: contactCardRoot.modelData || ({})
+            property string name: contactCardRoot.contactData.name || ""
+            property string email: contactCardRoot.contactData.email || ""
+            property string status: contactCardRoot.contactData.status || "离线"
+            property color statusColor: contactCardRoot.contactData.statusColor || "#94a3b8"
 
             width: ListView.view.width
             height: 78
@@ -224,7 +220,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        text: contactCardRoot.role
+                        text: contactCardRoot.email
                         color: "#64748b"
                         font.pixelSize: 13
                         elide: Text.ElideRight

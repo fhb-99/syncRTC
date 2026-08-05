@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QUrl>
 #include <QVariantMap>
 
 namespace {
@@ -36,6 +37,13 @@ ContactsController::ContactsController(CurrentUserState *currentUser, QObject *p
     : QObject(parent),
       m_currentUser(currentUser)
 {
+    // 请求侧：由联系人控制器发信号，HttpMgr 仍只负责真正的 HTTP 发送。
+    connect(this, &ContactsController::signal_contacts_http_request,
+            HttpMgr::GetInstance().get(), &HttpMgr::PostHttpRequest);
+    // 回包侧：和登录/注册/重置一样，由 HttpMgr 按模块分发后再交给控制器处理。
+    connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_contacts_mod_finish,
+            this, &ContactsController::slot_contacts_mod_finish);
+
     initHttpHandlers();
 }
 
@@ -141,7 +149,118 @@ void ContactsController::initHttpHandlers()
 
 void ContactsController::onContactsPageEntered()
 {
-    emit contactsLoadRequested();
+    requestContacts();
+}
+
+void ContactsController::requestContacts()
+{
+    if (GateServer_URL.isEmpty()) {
+        m_contactsError = QStringLiteral("GateServer 地址为空，无法加载联系人");
+        emit contactsErrorChanged();
+        emit contactsLoadFailed(m_contactsError);
+        return;
+    }
+
+    m_contactsLoading = true;
+    m_contactsError.clear();
+    emit contactsLoadingChanged();
+    emit contactsErrorChanged();
+
+    QJsonObject json;
+    // 假设现在可以获得token和device_id
+    QString session_token = "";
+    QString device_id = "";
+    json["session_token"] = session_token;
+    json["device_id"] = device_id;
+
+    // 当前只恢复请求链路；鉴权字段后续按登录态接入，不在这里臆造。
+    emit signal_contacts_http_request(
+        QUrl(GateServer_URL + "/get_contacts"),
+        json,
+        RequestID::ID_GET_CONTACTS,
+        Modules::CONTACTS_MOD);
+}
+
+void ContactsController::searchContacts(const QString &keyword)
+{
+    if (GateServer_URL.isEmpty()) {
+        m_contactsError = QStringLiteral("GateServer 地址为空，无法搜索联系人");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_SEARCH_CONTACTS, m_contactsError);
+        return;
+    }
+
+    QJsonObject json;
+    json["keyword"] = keyword.trimmed();
+    if (json["keyword"].toString().isEmpty()) {
+        m_contactsError = QStringLiteral("搜索关键词不能为空");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_SEARCH_CONTACTS, m_contactsError);
+        return;
+    }
+
+    // 搜索联系人请求入口，具体返回数据在 ID_SEARCH_CONTACTS handler 中处理。
+    emit signal_contacts_http_request(
+        QUrl(GateServer_URL + "/search_contacts"),
+        json,
+        RequestID::ID_SEARCH_CONTACTS,
+        Modules::CONTACTS_MOD);
+}
+
+void ContactsController::addContact(int uid)
+{
+    if (GateServer_URL.isEmpty()) {
+        m_contactsError = QStringLiteral("GateServer 地址为空，无法添加联系人");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_ADD_CONTACT, m_contactsError);
+        return;
+    }
+    if (uid <= 0) {
+        m_contactsError = QStringLiteral("联系人 uid 无效，无法添加联系人");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_ADD_CONTACT, m_contactsError);
+        return;
+    }
+
+    QJsonObject json;
+    json["contact_uid"] = uid;
+    QString session_token = "";
+    QString device_id = "";
+    json["session_token"] = session_token;
+    json["device_id"] = device_id;
+
+    // 单向添加联系人，只发送目标 uid，成功后由回包通知 QML。
+    emit signal_contacts_http_request(
+        QUrl(GateServer_URL + "/add_contact"),
+        json,
+        RequestID::ID_ADD_CONTACT,
+        Modules::CONTACTS_MOD);
+}
+
+void ContactsController::deleteContact(int uid)
+{
+    if (GateServer_URL.isEmpty()) {
+        m_contactsError = QStringLiteral("GateServer 地址为空，无法删除联系人");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_DELETE_CONTACT, m_contactsError);
+        return;
+    }
+    if (uid <= 0) {
+        m_contactsError = QStringLiteral("联系人 uid 无效，无法删除联系人");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_DELETE_CONTACT, m_contactsError);
+        return;
+    }
+
+    QJsonObject json;
+    json["contact_uid"] = uid;
+
+    // 单向删除联系人，只发送目标 uid，成功后由回包通知 QML。
+    emit signal_contacts_http_request(
+        QUrl(GateServer_URL + "/delete_contact"),
+        json,
+        RequestID::ID_DELETE_CONTACT,
+        Modules::CONTACTS_MOD);
 }
 
 void ContactsController::slot_contacts_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error)

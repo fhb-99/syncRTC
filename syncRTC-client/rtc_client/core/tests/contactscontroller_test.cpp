@@ -6,19 +6,98 @@
 
 #include "../src/controllers/contacts/contactscontroller.h"
 
+Q_DECLARE_METATYPE(RequestID)
+Q_DECLARE_METATYPE(Modules)
+
+namespace {
+
+class GateServerUrlRestore
+{
+public:
+    GateServerUrlRestore() : m_previousUrl(GateServer_URL) {}
+    ~GateServerUrlRestore() { GateServer_URL = m_previousUrl; }
+
+private:
+    QString m_previousUrl;
+};
+
+} // namespace
+
 class ContactsControllerTest : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        qRegisterMetaType<RequestID>("RequestID");
+        qRegisterMetaType<Modules>("Modules");
+    }
+
     void enteringContactsPageRequestsContacts()
     {
+        const GateServerUrlRestore restoreUrl;
+        GateServer_URL = QStringLiteral("http://127.0.0.1:8080");
+
         ContactsController controller;
-        QSignalSpy loadRequestedSpy(&controller, &ContactsController::contactsLoadRequested);
+        QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
+        QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
 
         controller.onContactsPageEntered();
 
-        QCOMPARE(loadRequestedSpy.count(), 1);
+        QCOMPARE(requestSpy.count(), 1);
+        const QList<QVariant> arguments = requestSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/get_contacts"));
+        QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_GET_CONTACTS);
+        QCOMPARE(arguments.at(3).value<Modules>(), Modules::CONTACTS_MOD);
+    }
+
+    void missingGateServerUrlReportsLoadFailure()
+    {
+        const GateServerUrlRestore restoreUrl;
+        GateServer_URL.clear();
+
+        ContactsController controller;
+        QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
+        QSignalSpy failedSpy(&controller, &ContactsController::contactsLoadFailed);
+        QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
+
+        controller.requestContacts();
+
+        QCOMPARE(requestSpy.count(), 0);
+        QCOMPARE(failedSpy.count(), 1);
+        QVERIFY(failedSpy.takeFirst().at(0).toString().contains(QStringLiteral("GateServer")));
+    }
+
+    void contactOperationRequestsAreEmitted()
+    {
+        const GateServerUrlRestore restoreUrl;
+        GateServer_URL = QStringLiteral("http://127.0.0.1:8080");
+
+        ContactsController controller;
+        QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
+        QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
+
+        controller.searchContacts(QStringLiteral(" bob "));
+        controller.addContact(7);
+        controller.deleteContact(8);
+
+        QCOMPARE(requestSpy.count(), 3);
+
+        QList<QVariant> arguments = requestSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/search_contacts"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("keyword").toString(), QStringLiteral("bob"));
+        QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_SEARCH_CONTACTS);
+
+        arguments = requestSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/add_contact"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("contact_uid").toInt(), 7);
+        QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_ADD_CONTACT);
+
+        arguments = requestSpy.takeFirst();
+        QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/delete_contact"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("contact_uid").toInt(), 8);
+        QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_DELETE_CONTACT);
     }
 
     void contactResponseUpdatesContacts()
@@ -108,6 +187,27 @@ private slots:
 
         QCOMPARE(failedSpy.count(), 1);
         QCOMPARE(failedSpy.takeFirst().at(0).toInt(), RequestID::ID_ADD_CONTACT);
+    }
+
+    void invalidContactOperationRequestReportsFailure()
+    {
+        const GateServerUrlRestore restoreUrl;
+        GateServer_URL = QStringLiteral("http://127.0.0.1:8080");
+
+        ContactsController controller;
+        QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
+        QSignalSpy failedSpy(&controller, &ContactsController::contactsOperationFailed);
+        QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
+
+        controller.searchContacts(QStringLiteral("   "));
+        controller.addContact(0);
+        controller.deleteContact(-1);
+
+        QCOMPARE(requestSpy.count(), 0);
+        QCOMPARE(failedSpy.count(), 3);
+        QCOMPARE(failedSpy.takeFirst().at(0).toInt(), RequestID::ID_SEARCH_CONTACTS);
+        QCOMPARE(failedSpy.takeFirst().at(0).toInt(), RequestID::ID_ADD_CONTACT);
+        QCOMPARE(failedSpy.takeFirst().at(0).toInt(), RequestID::ID_DELETE_CONTACT);
     }
 };
 

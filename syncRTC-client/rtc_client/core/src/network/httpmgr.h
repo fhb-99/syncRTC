@@ -28,6 +28,7 @@ signals:
     void signal_login_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error);
     void signal_register_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error);
     void signal_reset_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error);
+    void signal_contacts_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error);
 
 public slots:
     void slot_http_finish(RequestID reqID, QByteArray res, ErrorCodes error, Modules module);

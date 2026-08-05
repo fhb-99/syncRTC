@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QJsonObject>
 #include <QMap>
+#include <QUrl>
 #include <QVariantList>
 
 #include <functional>
@@ -25,6 +26,10 @@ public:
 
     // 通讯录页面切入时由 QML 调用；控制器负责发起请求和处理回包。
     Q_INVOKABLE void onContactsPageEntered();
+    Q_INVOKABLE void requestContacts();
+    Q_INVOKABLE void searchContacts(const QString &keyword);
+    Q_INVOKABLE void addContact(int uid);
+    Q_INVOKABLE void deleteContact(int uid);
 
     bool contactsLoading() const { return m_contactsLoading; }
     QVariantList contacts() const { return m_contacts; }
@@ -33,7 +38,7 @@ public:
     QString contactsMessage() const { return m_contactsMessage; }
 
 signals:
-    void contactsLoadRequested();
+    void signal_contacts_http_request(QUrl url, QJsonObject jsonObj, RequestID reqID, Modules module);
     void contactsLoaded(const QVariantList &contacts);
     void contactsLoadFailed(const QString &reason);
     void contactsSearchFinished(const QVariantList &contacts);
