@@ -297,3 +297,71 @@ bool MysqlMgr::GetContactListByUid(int uid, std::vector<ContactInfo>& contacts)
         return false;
     }
 }
+
+bool MysqlMgr::AddContact(int uid, int contact_uid)
+{
+    if (!pool_ || uid <= 0 || contact_uid <= 0 || uid == contact_uid) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "INSERT INTO user_contacts "
+            "(user_id, contact_user_id, relation_status) "
+            "VALUES (?, ?, 1) "
+            "ON DUPLICATE KEY UPDATE relation_status = 1"));
+        pstmt->setInt(1, uid);
+        pstmt->setInt(2, contact_uid);
+
+        pstmt->executeUpdate();
+        return true;
+    }
+    catch (sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what()
+                  << " (MySQL error code: " << e.getErrorCode()
+                  << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}
+
+bool MysqlMgr::DeleteContact(int uid, int contact_uid)
+{
+    if (!pool_ || uid <= 0 || contact_uid <= 0 || uid == contact_uid) {
+        return false;
+    }
+
+    auto con = pool_->getConnection();
+    if (!con || !con->_con) {
+        return false;
+    }
+
+    Defer defer([this, &con](){
+        pool_->returnConnection(std::move(con));
+    });
+
+    try {
+        std::unique_ptr<sql::PreparedStatement> pstmt(con->_con->prepareStatement(
+            "UPDATE user_contacts "
+            "SET relation_status = 0 "
+            "WHERE user_id = ? AND contact_user_id = ?"));
+        pstmt->setInt(1, uid);
+        pstmt->setInt(2, contact_uid);
+
+        return pstmt->executeUpdate() > 0;
+    }
+    catch (sql::SQLException& e) {
+        std::cerr << "SQLException: " << e.what()
+                  << " (MySQL error code: " << e.getErrorCode()
+                  << ", SQLState: " << e.getSQLState() << " )" << std::endl;
+        return false;
+    }
+}

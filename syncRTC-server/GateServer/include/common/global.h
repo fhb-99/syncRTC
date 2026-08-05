@@ -37,6 +37,10 @@ enum RequestID
     ID_RESET_USER = 1002,
     ID_LOGIN_USER = 1003,
     ID_MEETING_LOGIN = 1004,
+    ID_GET_CONTACTS = 1004,     // 获取联系人列表
+    ID_SEARCH_CONTACTS = 1005,  // 搜索联系人
+    ID_ADD_CONTACT = 1006,      // 单向添加联系人
+    ID_DELETE_CONTACT = 1007,   // 单向删除联系人
 };
 
 enum Modules {

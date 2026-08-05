@@ -94,21 +94,9 @@ int main()
         return 1;
     }
 
-    {
-        auto connection = ConnectToMysql();
-        auto stmt = std::unique_ptr<sql::PreparedStatement>(
-            connection->prepareStatement(
-                "INSERT INTO user_contacts "
-                "(user_id, contact_user_id, alias, remark) "
-                "VALUES (?, ?, ?, ?)"));
-        stmt->setInt(1, first);
-        stmt->setInt(2, contact_uid);
-        stmt->setString(3, "Contact Alias");
-        stmt->setString(4, "Contact Remark");
-        if (stmt->executeUpdate() != 1) {
-            std::cerr << "contact relation was not inserted" << std::endl;
-            return 1;
-        }
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "contact relation was not inserted" << std::endl;
+        return 1;
     }
 
     std::vector<ContactInfo> contacts;
@@ -118,10 +106,32 @@ int main()
         contacts[0].username != contact_username ||
         contacts[0].email != contact_email ||
         contacts[0].display_name != contact_username ||
-        contacts[0].alias != "Contact Alias" ||
-        contacts[0].remark != "Contact Remark" ||
+        !contacts[0].alias.empty() ||
+        !contacts[0].remark.empty() ||
         contacts[0].relation_status != 1) {
         std::cerr << "contact list was not returned correctly" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "duplicate contact add should be treated as success" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->DeleteContact(first, contact_uid)) {
+        std::cerr << "contact relation was not deleted" << std::endl;
+        return 1;
+    }
+
+    contacts.clear();
+    if (!MysqlMgr::GetInstance()->GetContactListByUid(first, contacts) ||
+        !contacts.empty()) {
+        std::cerr << "deleted contact should not be returned" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "deleted contact should be added again" << std::endl;
         return 1;
     }
 
