@@ -6,7 +6,8 @@ RealtimeController::RealtimeController(CurrentUserState *currentUser, QObject *p
     : QObject{parent},
       m_currentUser(currentUser),
       m_profile(std::make_unique<ProfileController>(currentUser)),
-      m_meeting(std::make_unique<MeetingController>())
+      m_meeting(std::make_unique<MeetingController>()),
+      m_chat(std::make_unique<ChatController>())
 {
     Q_ASSERT(m_currentUser);
 
@@ -107,6 +108,61 @@ void RealtimeController::initHandlers()
     m_handlers.insert(ID_MEETING_ENDED, [this](const QJsonObject &json) {
         if (!m_meeting->applyMeetingEnded(json)) {
             qWarning() << "Meeting ended notification invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MEMBER_JOINED, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingMemberJoined(json)) {
+            qWarning() << "Meeting member joined notification invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MEMBER_LEFT, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingMemberLeft(json)) {
+            qWarning() << "Meeting member left notification invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MEMBER_RECONNECTING, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingMemberReconnecting(json)) {
+            qWarning() << "Meeting member reconnecting notification invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MEMBER_RECONNECTED, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingMemberReconnected(json)) {
+            qWarning() << "Meeting member reconnected notification invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MEMBER_TIMEOUT_LEFT, [this](const QJsonObject &json) {
+        if (!m_meeting->applyMeetingMemberLeft(json)) {
+            qWarning() << "Meeting member timeout-left notification invalid";
+        }
+    });
+
+    // 聊天控制器只处理消息收发和展示，生命周期判断仍由 MeetingController 与服务端负责。
+    m_handlers.insert(ID_SEND_MEETING_MESSAGE_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_chat->applySendMessageAck(json)) {
+            qWarning() << "Meeting chat send acknowledgement invalid";
+        }
+    });
+
+    m_handlers.insert(ID_MEETING_MESSAGE_PUSH, [this](const QJsonObject &json) {
+        if (!m_chat->applyMessageReceived(json)) {
+            qWarning() << "Meeting chat push invalid";
+        }
+    });
+
+    m_handlers.insert(ID_GET_MEETING_GROUP_MESSAGES_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_chat->applyGroupHistoryResponse(json)) {
+            qWarning() << "Meeting group history response invalid";
+        }
+    });
+
+    m_handlers.insert(ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE, [this](const QJsonObject &json) {
+        if (!m_chat->applyPrivateHistoryResponse(json)) {
+            qWarning() << "Meeting private history response invalid";
         }
     });
 }

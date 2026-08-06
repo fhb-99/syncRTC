@@ -67,6 +67,15 @@ public:
     bool applyLeaveMeetingResponse(const QJsonObject &json);
     bool applyEndMeetingResponse(const QJsonObject &json);
     bool applyMeetingEnded(const QJsonObject &json);
+    // 收到其他用户入会通知后，增量维护当前会议成员列表。
+    bool applyMeetingMemberJoined(const QJsonObject &json);
+    // 收到其他用户离会通知后，从当前会议成员列表删除该用户。
+    bool applyMeetingMemberLeft(const QJsonObject &json);
+    // 收到断线通知后保留该成员，只更新为重连中状态。
+    bool applyMeetingMemberReconnecting(const QJsonObject &json);
+    // 收到重连成功通知后，把成员恢复为正常会议状态。
+    bool applyMeetingMemberReconnected(const QJsonObject &json);
+    QVariantList currentMeetingMembers() const;
 
 signals:
     void recentMeetingsChanged();
@@ -85,6 +94,8 @@ signals:
     void endMeetingSucceeded(const QString &meetingId);
     void endMeetingFailed(int error);
     void meetingEnded(const QString &meetingId);
+    // 成员列表变化后通知 QML。首次入会和成员增量加入都会触发该信号。
+    void meetingMembersChanged(const QString &meetingId, const QVariantList &members);
 
 private:
     struct MeetingItem {
@@ -107,6 +118,8 @@ private:
     QString m_pendingStartMeetingId;
     QString m_pendingLeaveMeetingId;
     QString m_pendingEndMeetingId;
+    QString m_currentMeetingId;
+    QVariantList m_currentMeetingMembers;
 };
 
 #endif // MEETINGCONTROLLER_H

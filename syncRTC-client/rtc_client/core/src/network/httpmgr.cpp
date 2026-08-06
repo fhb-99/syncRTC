@@ -71,4 +71,7 @@ void HttpMgr::slot_http_finish(RequestID reqID, QByteArray res, ErrorCodes error
     else if(module == Modules::RESET_MOD) {
         emit signal_reset_mod_finish(reqID, res, error);
     }
+    else if(module == Modules::CONTACTS_MOD) {
+        emit signal_contacts_mod_finish(reqID, res, error);
+    }
 }

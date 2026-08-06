@@ -6,6 +6,11 @@ CurrentUserState::CurrentUserState(QObject *parent)
 
 }
 
+int CurrentUserState::uid() const
+{
+    return m_uid;
+}
+
 QString CurrentUserState::username() const
 {
     return m_username;
@@ -14,6 +19,16 @@ QString CurrentUserState::username() const
 QString CurrentUserState::email() const
 {
     return m_email;
+}
+
+void CurrentUserState::setUid(int uid)
+{
+    if (m_uid == uid) {
+        return;
+    }
+
+    m_uid = uid;
+    emit uidChanged();
 }
 
 void CurrentUserState::setEmail(const QString &email)

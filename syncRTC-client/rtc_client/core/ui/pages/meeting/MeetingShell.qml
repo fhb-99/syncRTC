@@ -20,6 +20,8 @@ Item {
     property string activeMeetingCode: ""
     property string activeMeetingStatus: "scheduled"
     property string activeMeetingRole: "participant"
+    property var activeMeetingMembers: []
+    property var chatControllerRef: chatController
 
     function avatarText() {
         var name = username.trim()
@@ -49,7 +51,7 @@ Item {
         return payload && payload[key] !== undefined && payload[key] !== null ? payload[key] : fallback
     }
 
-    function enterMeeting(payload, meetingId, status, role) {
+    function enterMeeting(payload, meetingId, status, role, members) {
         var info = typeof payload === "object" && payload !== null ? payload : null
         var code = info ? payloadValue(info, "meeting_code", payloadValue(info, "meetingCode", "")) : payload
         var id = info ? payloadValue(info, "meeting_id", payloadValue(info, "meetingId", code)) : (meetingId || code)
@@ -58,15 +60,19 @@ Item {
         activeMeetingCode = String(code || activeMeetingId)
         activeMeetingStatus = normalizeMeetingStatus(info ? payloadValue(info, "status", status) : status)
         activeMeetingRole = normalizeMeetingRole(info ? payloadValue(info, "role", role) : role)
+        activeMeetingMembers = members || []
+        chatControllerRef.setActiveMeetingId(activeMeetingId)
         inMeeting = true
     }
 
     function leaveMeeting() {
+        chatControllerRef.setActiveMeetingId("")
         inMeeting = false
         activeMeetingId = ""
         activeMeetingCode = ""
         activeMeetingStatus = "scheduled"
         activeMeetingRole = "participant"
+        activeMeetingMembers = []
     }
 
     function requestLeaveMeeting(meetingId) {
@@ -100,7 +106,8 @@ Item {
                         meetingCode,
                         arguments.length > 1 ? arguments[1] : "",
                         arguments.length > 2 ? arguments[2] : "scheduled",
-                        arguments.length > 3 ? arguments[3] : "participant")
+                        arguments.length > 3 ? arguments[3] : "participant",
+                        arguments.length > 4 ? arguments[4] : [])
         }
 
         // 入会被服务端拒绝时保留在首页，并显示服务端错误码供后续文案映射。
@@ -139,6 +146,30 @@ Item {
 
         function onMeetingEnded(meetingId) {
             root.applyMeetingEnded(meetingId)
+        }
+
+        // 当前会议收到新人加入通知后，用控制器维护后的完整列表刷新成员面板。
+        function onMeetingMembersChanged(meetingId, members) {
+            if (String(meetingId) === root.activeMeetingId)
+                root.activeMeetingMembers = members
+        }
+    }
+
+    Connections {
+        target: root.chatControllerRef
+
+        // 发送失败时消息已标记为 failed，这里只补充一次用户可见提示。
+        function onMessageSendFailed(clientMsgId, error) {
+            root.showToast("发送聊天失败（错误码：" + error + "）")
+        }
+
+        function onGroupHistoryLoadFailed(error) {
+            root.showToast("加载群聊历史失败（错误码：" + error + "）")
+        }
+
+        function onPrivateHistoryLoadFailed(peerUserId, error) {
+            void(peerUserId)
+            root.showToast("加载私聊历史失败（错误码：" + error + "）")
         }
     }
 
@@ -468,6 +499,8 @@ Item {
         status: root.activeMeetingStatus
         role: root.activeMeetingRole
         username: root.username
+        members: root.activeMeetingMembers
+        chatController: root.chatControllerRef
         onStartMeetingRequested: function(meetingId) {
             root.requestStartMeeting(meetingId)
         }

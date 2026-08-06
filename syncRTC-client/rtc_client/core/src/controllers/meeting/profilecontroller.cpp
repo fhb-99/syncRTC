@@ -13,12 +13,16 @@ bool ProfileController::applyProfile(const QJsonObject &json)
 {
     const QString email = json.value("email").toString().trimmed();
     const QString username = json.value("username").toString().trimmed();
+    const int uid = json.value("uid").toInt(json.value("user_id").toInt());
 
     if (email.isEmpty() || username.isEmpty()) {
         qDebug() << "用户资料信息缺少";
         return false;
     }
 
+    if (uid > 0) {
+        m_currentUser->setUid(uid);
+    }
     m_currentUser->setUsername(username);
     m_currentUser->setEmail(email);
     return true;
