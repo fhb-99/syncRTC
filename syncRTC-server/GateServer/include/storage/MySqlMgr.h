@@ -11,6 +11,7 @@
 #include <atomic>
 #include <queue>
 #include <condition_variable>
+#include <vector>
 
 #include <mysql/mysql.h>
 #include <mysql/mysql_time.h>
@@ -127,6 +128,11 @@ public:
 
     bool GetUserInfo(const std::string& email, UserInfo& user);
     bool GetUserInfoByUid(int uid, UserInfo& user);
+
+    // 根据用户 uid 读取单向联系人列表；在线/会议状态由 Gateway 后续从 Redis 合并。
+    bool GetContactListByUid(int uid, std::vector<ContactInfo>& contacts);
+    bool AddContact(int uid, int contact_uid);
+    bool DeleteContact(int uid, int contact_uid);
     
 private:
     friend class Singleton<MysqlMgr>;

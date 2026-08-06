@@ -169,12 +169,12 @@ LogicSystem::LogicSystem()
     RegisterGet("/get_test", [](std::shared_ptr<HttpConnection> connection) {
         beast::ostream(connection->_response.body()) << "receive get_test request";
         int i = 0;
-        for (auto& elem : connection->m_get_params) 
+        for (auto& elem : connection->m_get_params)
         {
             i++;
             beast::ostream(connection->_response.body()) << "param" << i << " key is " << elem.first;
             beast::ostream(connection->_response.body()) << ", " <<  " value is " << elem.second << std::endl;
-        } 
+        }
     });
 
     RegisterPost("/get_varifycode", [](std::shared_ptr<HttpConnection> connection){
@@ -185,7 +185,7 @@ LogicSystem::LogicSystem()
         Json::Reader reader;
         Json::Value src_root;
         bool parse_success = reader.parse(body_str, src_root);
-        if (!parse_success) 
+        if (!parse_success)
         {
             std::cout << "Failed to parse JSON data!" << std::endl;
             root["error"] = ErrorCodes::ERROR_JSON;
@@ -203,8 +203,8 @@ LogicSystem::LogicSystem()
         root["code"] = response.code();
         std::string jsonstr = root.toStyledString();
         beast::ostream(connection->_response.body()) << jsonstr;
-        return true; 
-    }); 
+        return true;
+    });
 
 
     RegisterPost("/register_user", [](std::shared_ptr<HttpConnection> connection){
@@ -239,7 +239,7 @@ LogicSystem::LogicSystem()
             return true;
         }
 
-        // redis中判断验证码是否一致 
+        // redis中判断验证码是否一致
         std::string varify_code;
         bool b_get_code = RedisMgr::GetInstance()->Get("code_" + data["email"].asString(), varify_code);
         std::cout << "varify_code is: " << varify_code << std::endl;
@@ -259,7 +259,7 @@ LogicSystem::LogicSystem()
             return true;
         }
 
-        // 从数据库中查询用户 
+        // 从数据库中查询用户
         std::string password_hash = HashPassword(user_data.password);
         int uid = MysqlMgr::GetInstance()->RegisterUser(user_data.username, user_data.email, password_hash);
         if(uid == -1) {
@@ -369,7 +369,7 @@ LogicSystem::LogicSystem()
             beast::ostream(connection->_response.body()) << jsonstr;
             return true;
         }
-        
+
         // 检查密码是否匹配
         std::string password_hash = "";
         bool is_pwd = MysqlMgr::GetInstance()->CheckPwd(email, password_hash);
@@ -405,7 +405,7 @@ LogicSystem::LogicSystem()
 			return true;
         }
 
-        // 随机生成token， redis存储token， 设置过期时间 
+        // 随机生成token， redis存储token， 设置过期时间
         const std::string session_token = LogicSystem::GenerateToken();
         if (session_token.empty() ||
             !LogicSystem::SaveSession(session_token, user_info.uid, device_id)) {
@@ -461,7 +461,7 @@ LogicSystem::LogicSystem()
             return true;
         }
 
-        // redis中判断验证码是否一致 
+        // redis中判断验证码是否一致
         std::string varify_code;
         bool b_get_code = RedisMgr::GetInstance()->Get("code_" + src_root["email"].asString(), varify_code);
         if(!b_get_code) {
@@ -496,6 +496,263 @@ LogicSystem::LogicSystem()
         std::string jsonstr = root.toStyledString();
         beast::ostream(connection->_response.body()) << jsonstr;
 
+        return true;
+    });
+
+    RegisterGet("/get_contacts", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        // 从redis当中通过token获得uid
+        const std::string session_token = src_root["session_token"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        int uid;
+        if(!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+            root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                    ? ErrorCodes::ERROR_SESSION_INVALID
+                                    : ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if (!RedisMgr::GetInstance()->IsConnected()) {
+            root["error"] = ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        std::vector<ContactInfo> contacts;
+        if (!MysqlMgr::GetInstance()->GetContactListByUid(uid, contacts)) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        Json::Value contact_array(Json::arrayValue);
+        for (const auto& contact : contacts) {
+            const std::string presence_key = "presence:" + std::to_string(contact.uid);
+            std::string status = RedisMgr::GetInstance()->HGet(presence_key, "status");
+            const std::string meeting_id = RedisMgr::GetInstance()->HGet(presence_key, "meeting_id");
+            if (status.empty()) {
+                status = "offline";
+            }
+            if (!meeting_id.empty()) {
+                status = "in_meeting";
+            }
+
+            Json::Value item;
+            item["uid"] = contact.uid;
+            item["username"] = contact.username;
+            item["email"] = contact.email;
+            item["display_name"] = contact.display_name;
+            item["alias"] = contact.alias;
+            item["remark"] = contact.remark;
+            item["relation_status"] = contact.relation_status;
+            // 关系和资料来自 MySQL，在线/会议状态只读 Realtime 写入的 Redis presence。
+            item["status"] = status;
+            contact_array.append(item);
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["contacts"] = contact_array;
+        root["count"] = static_cast<int>(contacts.size());
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+        return true;
+    });
+
+
+    RegisterGet("/search_contacts", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        std::string email = src_root["keyword"].asString();
+        if (email.empty()) {
+            root["error"] = ErrorCodes::ERROR_JSON;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        UserInfo user;
+        bool get_user = MysqlMgr::GetInstance()->GetUserInfo(email, user);
+        if (!get_user) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["uid"] = user.uid;
+        root["email"] = user.email;
+        root["username"] = user.username;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+        return true;
+    });
+
+
+    RegisterPost("/add_contact", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        int contact_uid = src_root["contact_uid"].asInt();
+        if(contact_uid < 0) {
+            root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+
+        // 从redis当中通过token获得uid
+        const std::string session_token = src_root["session_token"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        int uid;
+        if(!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+            root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                    ? ErrorCodes::ERROR_SESSION_INVALID
+                                    : ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if (!RedisMgr::GetInstance()->IsConnected()) {
+            root["error"] = ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if(!MysqlMgr::GetInstance()->AddContact(uid, contact_uid)) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        UserInfo user;
+        bool get_user = MysqlMgr::GetInstance()->GetUserInfoByUid(contact_uid, user);
+        if (!get_user) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // 联系人实时状态只从 Redis presence 读取，不写入 MySQL。
+        const std::string presence_key = "presence:" + std::to_string(contact_uid);
+        std::string status = RedisMgr::GetInstance()->HGet(presence_key, "status");
+        const std::string meeting_id = RedisMgr::GetInstance()->HGet(presence_key, "meeting_id");
+        if (status.empty()) {
+            status = "offline";
+        }
+        if (!meeting_id.empty()) {
+            status = "in_meeting";
+        }
+
+        // 获得联系人的相关信息后，还要判断其的状态
+
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["uid"] = user.uid;
+        root["email"] = user.email;
+        root["username"] = user.username;
+        root["status"] = status;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
+        return true;
+    });
+
+
+    RegisterPost("/delete_contact", [](std::shared_ptr<HttpConnection> connection) {
+        auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "receive body is " << body_str << std::endl;
+		connection->_response.set(http::field::content_type, "text/json");
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+        bool parse_success = reader.parse(body_str, src_root);
+		if (!parse_success) {
+			std::cout << "Failed to parse JSON data!" << std::endl;
+			root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+		}
+
+        int contact_uid = src_root["contact_uid"].asInt();
+        if(contact_uid < 0) {
+            root["error"] = ErrorCodes::ERROR_JSON;
+			std::string jsonstr = root.toStyledString();
+			beast::ostream(connection->_response.body()) << jsonstr;
+			return true;
+        }
+
+        // 从redis当中通过token获得uid
+        const std::string session_token = src_root["session_token"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        int uid;
+        if(!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+            root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                    ? ErrorCodes::ERROR_SESSION_INVALID
+                                    : ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        if(!MysqlMgr::GetInstance()->DeleteContact(uid, contact_uid)) {
+            root["error"] = ErrorCodes::ERROR_MYSQL;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        root["error"] = ErrorCodes::SUCCESS;
+        root["contact_uid"] = contact_uid;
+        std::string jsonstr = root.toStyledString();
+        beast::ostream(connection->_response.body()) << jsonstr;
         return true;
     });
 }

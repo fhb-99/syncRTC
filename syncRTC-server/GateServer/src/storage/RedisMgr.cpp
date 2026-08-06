@@ -1,6 +1,8 @@
 #include "storage/RedisMgr.h"
 #include "config/ConfigMgr.h"
 
+#include <iterator>
+
 namespace {
 // RAII：确保连接一定归还连接池
 class RedisConnGuard {
@@ -243,6 +245,145 @@ std::string RedisMgr::HGet(const std::string &key, const std::string &hkey)
     {
         std::cerr << "Redis HGet error: " << e.what() << std::endl;
         return "";
+    }
+}
+
+bool RedisMgr::SAdd(const std::string& key, const std::string& member)
+{
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->sadd(key, member);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis SAdd error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::SRem(const std::string& key, const std::string& member)
+{
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->srem(key, member);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis SRem error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::SIsMember(const std::string& key, const std::string& member)
+{
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        return redis->sismember(key, member);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis SIsMember error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+int RedisMgr::SCard(const std::string& key)
+{
+    if (!_con_pool) return 0;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return 0;
+        return redis->scard(key);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis SCard error: " << e.what() << std::endl;
+        return 0;
+    }
+}
+
+bool RedisMgr::SMembers(const std::string& key, std::vector<std::string>& members)
+{
+    members.clear();
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->smembers(key, std::back_inserter(members));
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis SMembers error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::ZAdd(const std::string& key, const std::string& member, double score)
+{
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zadd(key, member, score);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis ZAdd error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::ZRem(const std::string& key, const std::string& member)
+{
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zrem(key, member);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis ZRem error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::ZRangeByScore(const std::string& key, double max_score,
+                             std::vector<std::string>& members)
+{
+    members.clear();
+    if (!_con_pool) return false;
+    try
+    {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zrangebyscore(key, sw::redis::BoundedInterval<double>(
+                                 0, max_score, sw::redis::BoundType::CLOSED),
+                             std::back_inserter(members));
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Redis ZRangeByScore error: " << e.what() << std::endl;
+        return false;
     }
 }
 

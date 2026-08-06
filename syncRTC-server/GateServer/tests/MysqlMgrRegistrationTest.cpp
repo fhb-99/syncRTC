@@ -77,6 +77,64 @@ int main()
         return 1;
     }
 
+    std::vector<ContactInfo> empty_contacts;
+    if (!MysqlMgr::GetInstance()->GetContactListByUid(first, empty_contacts) ||
+        !empty_contacts.empty()) {
+        std::cerr << "new user contact list should be empty" << std::endl;
+        return 1;
+    }
+
+    const std::string contact_username = username + "_contact";
+    const std::string contact_email = contact_username + "@example.test";
+    TestUserCleanup contact_cleanup(contact_email);
+    const int contact_uid = MysqlMgr::GetInstance()->RegisterUser(
+        contact_username, contact_email, "test-password-hash");
+    if (contact_uid <= 0) {
+        std::cerr << "contact registration did not return a user id" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "contact relation was not inserted" << std::endl;
+        return 1;
+    }
+
+    std::vector<ContactInfo> contacts;
+    if (!MysqlMgr::GetInstance()->GetContactListByUid(first, contacts) ||
+        contacts.size() != 1 ||
+        contacts[0].uid != contact_uid ||
+        contacts[0].username != contact_username ||
+        contacts[0].email != contact_email ||
+        contacts[0].display_name != contact_username ||
+        !contacts[0].alias.empty() ||
+        !contacts[0].remark.empty() ||
+        contacts[0].relation_status != 1) {
+        std::cerr << "contact list was not returned correctly" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "duplicate contact add should be treated as success" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->DeleteContact(first, contact_uid)) {
+        std::cerr << "contact relation was not deleted" << std::endl;
+        return 1;
+    }
+
+    contacts.clear();
+    if (!MysqlMgr::GetInstance()->GetContactListByUid(first, contacts) ||
+        !contacts.empty()) {
+        std::cerr << "deleted contact should not be returned" << std::endl;
+        return 1;
+    }
+
+    if (!MysqlMgr::GetInstance()->AddContact(first, contact_uid)) {
+        std::cerr << "deleted contact should be added again" << std::endl;
+        return 1;
+    }
+
     const int duplicate = MysqlMgr::GetInstance()->RegisterUser(
         username + "_second", email, "test-password-hash");
     if (duplicate != 0) {

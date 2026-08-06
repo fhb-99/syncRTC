@@ -140,6 +140,7 @@ public:
     // 根据唯一的meeting_code来查找用户所要参加的会议存不存在，其中包括会议的基本信息和创建者信息，返回false表示会议不存在或数据库查询失败。
     bool GetMeetingInfoByCode(const std::string& meeting_code, MeetingInfo& meeting);
     bool GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting);
+    bool GetUserDisplayNameById(int user_id, std::string& display_name);
 
     // 仅当创建者仍在 scheduled 状态下开始会议，started_at 记录实际点击开始时间。
     bool StartMeeting(std::uint64_t meeting_id, int user_id);
@@ -151,6 +152,24 @@ public:
 
     // 入会成功后，保存用户与会议的持久关系，并记录首次入会时间。
     bool UpdateMeetingPart(const MeetingInfo& meeting, int uid);
+
+    // 保存会议聊天消息。message_id 和 created_at 由 MySQL 生成后回填；
+    // receiver_user_id 为空表示群聊，不为空表示私聊。
+    bool SaveMeetingMessage(MeetingMessageInfo& message);
+
+    // 查询群聊历史消息。before_message_id 为 0 表示取最新一页，否则取该消息之前的一页。
+    bool GetMeetingGroupMessages(std::uint64_t meeting_id,
+                                 std::uint64_t before_message_id,
+                                 std::uint32_t limit,
+                                 std::vector<MeetingMessageInfo>& messages);
+
+    // 查询两个用户在同一会议中的私聊历史。用户只能看到自己与对方之间的消息。
+    bool GetMeetingPrivateMessages(std::uint64_t meeting_id,
+                                   int user_id,
+                                   int peer_user_id,
+                                   std::uint64_t before_message_id,
+                                   std::uint32_t limit,
+                                   std::vector<MeetingMessageInfo>& messages);
 
 private:
     friend class Singleton<MysqlMgr>;

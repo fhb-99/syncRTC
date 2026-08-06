@@ -97,6 +97,18 @@ struct RecentMeetingInfo
 };
 
 
+struct MeetingMessageInfo
+{
+    std::uint64_t message_id = 0;
+    std::uint64_t meeting_id = 0;
+    int sender_user_id = 0;
+    std::optional<std::uint64_t> receiver_user_id;
+    std::string client_msg_id;
+    std::string content;
+    std::uint8_t content_type = 0;
+    std::string created_at;
+};
+
 struct HistoryMeetingInfo
 {
     std::string meeting_code;       // 用户复制或输入的会议号

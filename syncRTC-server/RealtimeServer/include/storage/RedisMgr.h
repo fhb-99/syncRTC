@@ -155,6 +155,11 @@ public:
     int SCard(const std::string& key);   // 获取集合成员数量
     bool SMembers(const std::string& key, std::vector<std::string>& members); // 获取集合所有成员
 
+    // 重连超时索引使用有序集合，score 为截止时间戳。
+    bool ZAdd(const std::string& key, const std::string& member, double score);
+    bool ZRem(const std::string& key, const std::string& member);
+    bool ZRangeByScore(const std::string& key, double max_score, std::vector<std::string>& members);
+
     // 键操作
     bool Del(const std::string& key);
     bool ExistsKey(const std::string& key);

@@ -301,6 +301,51 @@ bool RedisMgr::SIsMember(const std::string& key, const std::string& member)
     }
 }
 
+bool RedisMgr::ZAdd(const std::string& key, const std::string& member, double score)
+{
+    if (!_con_pool) return false;
+    try {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zadd(key, member, score);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Redis ZAdd error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::ZRem(const std::string& key, const std::string& member)
+{
+    if (!_con_pool) return false;
+    try {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zrem(key, member);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Redis ZRem error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool RedisMgr::ZRangeByScore(const std::string& key, double max_score,
+                             std::vector<std::string>& members)
+{
+    if (!_con_pool) return false;
+    try {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        redis->zrangebyscore(key, sw::redis::BoundedInterval<double>(
+                                 0, max_score, sw::redis::BoundType::CLOSED),
+                             std::back_inserter(members));
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Redis ZRangeByScore error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 
 int RedisMgr::SCard(const std::string& key)   // 获取集合成员数量
 {
