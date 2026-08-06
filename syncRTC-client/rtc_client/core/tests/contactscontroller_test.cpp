@@ -5,6 +5,7 @@
 #include <QtTest>
 
 #include "../src/controllers/contacts/contactscontroller.h"
+#include "../src/models/clientsession.h"
 
 Q_DECLARE_METATYPE(RequestID)
 Q_DECLARE_METATYPE(Modules)
@@ -39,7 +40,10 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:8080");
 
-        ContactsController controller;
+        ClientSession clientSession;
+        clientSession.setDeviceId(QStringLiteral("device-id"));
+        clientSession.setSessionToken(QStringLiteral("session-token"));
+        ContactsController controller(nullptr, &clientSession);
         QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
         QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
 
@@ -50,6 +54,10 @@ private slots:
         QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/get_contacts"));
         QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_GET_CONTACTS);
         QCOMPARE(arguments.at(3).value<Modules>(), Modules::CONTACTS_MOD);
+        QCOMPARE(arguments.at(1).toJsonObject().value("session_token").toString(),
+                 QStringLiteral("session-token"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("device_id").toString(),
+                 QStringLiteral("device-id"));
     }
 
     void missingGateServerUrlReportsLoadFailure()
@@ -57,7 +65,10 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL.clear();
 
-        ContactsController controller;
+        ClientSession clientSession;
+        clientSession.setDeviceId(QStringLiteral("device-id"));
+        clientSession.setSessionToken(QStringLiteral("session-token"));
+        ContactsController controller(nullptr, &clientSession);
         QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
         QSignalSpy failedSpy(&controller, &ContactsController::contactsLoadFailed);
         QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
@@ -74,7 +85,10 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:8080");
 
-        ContactsController controller;
+        ClientSession clientSession;
+        clientSession.setDeviceId(QStringLiteral("device-id"));
+        clientSession.setSessionToken(QStringLiteral("session-token"));
+        ContactsController controller(nullptr, &clientSession);
         QObject::disconnect(&controller, nullptr, HttpMgr::GetInstance().get(), nullptr);
         QSignalSpy requestSpy(&controller, &ContactsController::signal_contacts_http_request);
 
@@ -87,16 +101,26 @@ private slots:
         QList<QVariant> arguments = requestSpy.takeFirst();
         QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/search_contacts"));
         QCOMPARE(arguments.at(1).toJsonObject().value("keyword").toString(), QStringLiteral("bob"));
+        QVERIFY(!arguments.at(1).toJsonObject().contains("session_token"));
+        QVERIFY(!arguments.at(1).toJsonObject().contains("device_id"));
         QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_SEARCH_CONTACTS);
 
         arguments = requestSpy.takeFirst();
         QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/add_contact"));
         QCOMPARE(arguments.at(1).toJsonObject().value("contact_uid").toInt(), 7);
+        QCOMPARE(arguments.at(1).toJsonObject().value("session_token").toString(),
+                 QStringLiteral("session-token"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("device_id").toString(),
+                 QStringLiteral("device-id"));
         QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_ADD_CONTACT);
 
         arguments = requestSpy.takeFirst();
         QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/delete_contact"));
         QCOMPARE(arguments.at(1).toJsonObject().value("contact_uid").toInt(), 8);
+        QCOMPARE(arguments.at(1).toJsonObject().value("session_token").toString(),
+                 QStringLiteral("session-token"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("device_id").toString(),
+                 QStringLiteral("device-id"));
         QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_DELETE_CONTACT);
     }
 

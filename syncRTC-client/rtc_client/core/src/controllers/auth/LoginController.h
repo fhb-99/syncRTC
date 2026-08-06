@@ -8,6 +8,7 @@
 #include "../../models/global.h"
 #include "../../models/sessioncredentialstore.h"
 
+class ClientSession;
 
 class LoginController : public QObject
 {
@@ -15,15 +16,16 @@ class LoginController : public QObject
     Q_PROPERTY(bool hasRememberedSession READ hasRememberedSession NOTIFY rememberedSessionChanged)
 
 public:
-    explicit LoginController(QObject *parent = nullptr,
+    explicit LoginController(ClientSession *clientSession,
+                             QObject *parent = nullptr,
                              const QString &credentialTarget = SessionCredentialStore::defaultTargetName());
 
     Q_INVOKABLE void LoginRequest(const QString& account, const QString& password, bool rememberLogin);
     Q_INVOKABLE void ResumeLoginRequest();
     Q_INVOKABLE void ForgetRememberedSession();
 
-    void setDeviceID(const QString& device_id) { m_device_id = device_id; }
-    QString DeviceID() { return m_device_id; }
+    void setDeviceID(const QString& deviceId);
+    QString DeviceID() const;
     bool hasRememberedSession() const { return m_hasRememberedSession; }
 
 private:
@@ -42,7 +44,7 @@ private:
 
     ServerInfo m_server;
 
-    QString m_device_id;
+    ClientSession *m_clientSession = nullptr;
     QString m_loginAccount;
     QString m_rememberedAccount;
     QString m_rememberedSessionToken;

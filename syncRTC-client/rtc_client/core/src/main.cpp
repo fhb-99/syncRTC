@@ -9,6 +9,7 @@
 #include "controllers/contacts/contactscontroller.h"
 #include "controllers/meeting/realtimecontroller.h"
 #include "models/currentuserstate.h"
+#include "models/clientsession.h"
 #include "models/deviceidstore.h"
 #include "models/global.h"
 
@@ -18,7 +19,8 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
 
-    AuthController authController;
+    ClientSession clientSession;
+    AuthController authController(&clientSession);
     engine.rootContext()->setContextProperty("authController", &authController);
 
     QSettings deviceSettings(QSettings::IniFormat,
@@ -27,7 +29,7 @@ int main(int argc, char *argv[])
                              QStringLiteral("rtc_client"));
     QString device_id = DeviceIdStore::loadOrCreate(deviceSettings);
 
-    authController.GetLoginControll()->setDeviceID(device_id);
+    clientSession.setDeviceId(device_id);
 
     const QString dir = QDir::currentPath();
     QDir configDir(dir);
@@ -57,7 +59,7 @@ int main(int argc, char *argv[])
 
     CurrentUserState currentUser;
     RealtimeController realtimeController(&currentUser);
-    ContactsController contactsController(&currentUser);
+    ContactsController contactsController(&currentUser, &clientSession);
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);

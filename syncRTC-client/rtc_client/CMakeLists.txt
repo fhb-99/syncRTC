@@ -64,6 +64,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
         SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
+        SOURCES core/src/models/clientsession.h core/src/models/clientsession.cpp
         SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
         SOURCES core/src/controllers/meeting/chatcontroller.h core/src/controllers/meeting/chatcontroller.cpp
         SOURCES core/src/controllers/contacts/contactscontroller.h core/src/controllers/contacts/contactscontroller.cpp
@@ -117,6 +118,19 @@ if(BUILD_TESTING)
 
     add_test(NAME currentuserstate_test COMMAND currentuserstate_test)
 
+    qt_add_executable(clientsession_test
+        core/tests/clientsession_test.cpp
+        core/src/models/clientsession.h
+        core/src/models/clientsession.cpp
+    )
+
+    target_link_libraries(clientsession_test
+        PRIVATE
+            Qt6::Test
+    )
+
+    add_test(NAME clientsession_test COMMAND clientsession_test)
+
     qt_add_executable(deviceidstore_test
         core/tests/deviceidstore_test.cpp
         core/src/models/deviceidstore.h
@@ -155,6 +169,8 @@ if(BUILD_TESTING)
         core/src/models/Singleton.h
         core/src/models/deviceidstore.h
         core/src/models/deviceidstore.cpp
+        core/src/models/clientsession.h
+        core/src/models/clientsession.cpp
         core/src/models/global.h
         core/src/models/sessioncredentialstore.h
         core/src/models/sessioncredentialstore.cpp
@@ -250,6 +266,8 @@ if(BUILD_TESTING)
         core/src/models/Singleton.h
         core/src/models/currentuserstate.h
         core/src/models/currentuserstate.cpp
+        core/src/models/clientsession.h
+        core/src/models/clientsession.cpp
         core/src/models/global.h
         core/src/network/httpmgr.h
         core/src/network/httpmgr.cpp

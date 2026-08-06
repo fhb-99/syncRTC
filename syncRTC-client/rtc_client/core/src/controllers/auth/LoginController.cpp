@@ -1,5 +1,6 @@
 #include "LoginController.h"
 
+#include "../../models/clientsession.h"
 #include "../../network/httpmgr.h"
 #include "../../network/tcpmgr.h"
 
@@ -8,8 +9,10 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
-LoginController::LoginController(QObject *parent, const QString &credentialTarget)
+LoginController::LoginController(ClientSession *clientSession, QObject *parent,
+                                 const QString &credentialTarget)
     : QObject(parent),
+      m_clientSession(clientSession),
       m_sessionStore(credentialTarget)
 {
     initHttpHandlers();
@@ -37,7 +40,7 @@ void LoginController::LoginRequest(const QString &account, const QString &passwo
     QJsonObject json;
     json["account"] = account;
     json["password"] = password;
-    json["device_id"] = m_device_id;
+    json["device_id"] = DeviceID();
     m_loginMode = LoginMode::Password;
     m_rememberLoginRequested = rememberLogin;
     m_loginAccount = account;
@@ -56,7 +59,7 @@ void LoginController::ResumeLoginRequest()
 
     QJsonObject json;
     json["session_token"] = m_rememberedSessionToken;
-    json["device_id"] = m_device_id;
+    json["device_id"] = DeviceID();
     m_loginMode = LoginMode::RememberedSession;
     m_rememberLoginRequested = true;
     HttpMgr::GetInstance()->PostHttpRequest(QUrl(GateServer_URL + "/login_user"),
@@ -103,6 +106,10 @@ void LoginController::initHttpHandlers()
         m_server.uid = json["uid"].toInt();
         m_server.sessionToken = sessionToken;
 
+        if (m_clientSession) {
+            m_clientSession->setSessionToken(sessionToken);
+        }
+
         if (m_loginMode == LoginMode::Password && !m_rememberLoginRequested) {
             if (!clearRememberedSession()) {
                 emit rememberLoginWarning("无法清除已保存的登录状态");
@@ -119,6 +126,18 @@ void LoginController::initHttpHandlers()
         // HTTP 登录成功后，由 LoginController 触发 RealtimeServer 的 TCP 连接。
         emit signal_connect_tcp(m_server);
     });
+}
+
+void LoginController::setDeviceID(const QString &deviceId)
+{
+    if (m_clientSession) {
+        m_clientSession->setDeviceId(deviceId);
+    }
+}
+
+QString LoginController::DeviceID() const
+{
+    return m_clientSession ? m_clientSession->getDeviceId() : QString();
 }
 
 bool LoginController::checkPasswordValid(const QString &password)

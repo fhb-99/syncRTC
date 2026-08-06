@@ -12,6 +12,8 @@
 #include "../../models/currentuserstate.h"
 #include "../../network/httpmgr.h"
 
+class ClientSession;
+
 class ContactsController : public QObject
 {
     Q_OBJECT
@@ -22,7 +24,9 @@ class ContactsController : public QObject
     Q_PROPERTY(QString contactsMessage READ contactsMessage NOTIFY contactsMessageChanged)
 
 public:
-    explicit ContactsController(CurrentUserState *currentUser = nullptr, QObject *parent = nullptr);
+    explicit ContactsController(CurrentUserState *currentUser = nullptr,
+                                ClientSession *clientSession = nullptr,
+                                QObject *parent = nullptr);
 
     // 通讯录页面切入时由 QML 调用；控制器负责发起请求和处理回包。
     Q_INVOKABLE void onContactsPageEntered();
@@ -58,6 +62,7 @@ private:
     void initHttpHandlers();
 
     CurrentUserState *m_currentUser = nullptr;
+    ClientSession *m_clientSession = nullptr;
     QMap<RequestID, std::function<void(const QJsonObject&)>> m_handlers;
     bool m_contactsLoading = false;
     QVariantList m_contacts;
