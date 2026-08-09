@@ -8,6 +8,7 @@
 #include "controllers/auth/AuthController.h"
 #include "controllers/contacts/contactscontroller.h"
 #include "controllers/meeting/realtimecontroller.h"
+#include "media/mediacontroller.h"
 #include "models/currentuserstate.h"
 #include "models/clientsession.h"
 #include "models/deviceidstore.h"
@@ -60,12 +61,14 @@ int main(int argc, char *argv[])
     CurrentUserState currentUser;
     RealtimeController realtimeController(&currentUser);
     ContactsController contactsController(&currentUser, &clientSession);
+    MediaController mediaController;
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);
     engine.rootContext()->setContextProperty("meetingController", realtimeController.meetingController());
     engine.rootContext()->setContextProperty("chatController", realtimeController.chatController());
     engine.rootContext()->setContextProperty("contactsController", &contactsController);
+    engine.rootContext()->setContextProperty("mediaController", &mediaController);
 
     QObject::connect(authController.GetLoginControll(), &LoginController::signal_connect_tcp,
                      &currentUser, [&currentUser](const ServerInfo &server) {

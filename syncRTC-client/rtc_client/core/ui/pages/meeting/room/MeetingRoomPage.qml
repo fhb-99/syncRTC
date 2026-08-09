@@ -39,6 +39,10 @@ Item {
     signal startMeetingRequested(string meetingId)
     signal endMeetingRequested(string meetingId)
     signal leaveRequested()
+    signal openMicrophoneRequested()
+    signal closeMicrophoneRequested()
+    signal openCameraRequested()
+    signal closeCameraRequested()
 
     function avatarText(name) {
         var value = name.trim()
@@ -87,6 +91,29 @@ Item {
             return
 
         root.endMeetingRequested(root.meetingId)
+    }
+
+    function setMicrophoneMuted(muted) {
+        if (root.microphoneMuted === muted)
+            return
+
+        root.microphoneMuted = muted
+        // QML 只发出用户意图，真实设备开关由 MediaController 接收信号后处理。
+        if (muted)
+            root.closeMicrophoneRequested()
+        else
+            root.openMicrophoneRequested()
+    }
+
+    function setCameraEnabled(enabled) {
+        if (root.cameraEnabled === enabled)
+            return
+
+        root.cameraEnabled = enabled
+        if (enabled)
+            root.openCameraRequested()
+        else
+            root.closeCameraRequested()
     }
 
     function currentChatPeerId() {
@@ -1551,7 +1578,7 @@ Item {
             label: root.microphoneMuted ? "取消静音" : "静音"
             iconText: root.microphoneMuted ? "◌" : "●"
             selected: root.microphoneMuted
-            onTriggered: root.microphoneMuted = !root.microphoneMuted
+            onTriggered: root.setMicrophoneMuted(!root.microphoneMuted)
         }
 
         ControlButton {
@@ -1559,7 +1586,7 @@ Item {
             label: root.cameraEnabled ? "视频" : "开视频"
             iconText: root.cameraEnabled ? "▣" : "□"
             selected: root.cameraEnabled
-            onTriggered: root.cameraEnabled = !root.cameraEnabled
+            onTriggered: root.setCameraEnabled(!root.cameraEnabled)
         }
 
         ControlButton {
