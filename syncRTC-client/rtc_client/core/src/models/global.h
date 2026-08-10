@@ -9,6 +9,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/frame.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
 #include <libswresample/swresample.h>
@@ -52,6 +53,8 @@ enum RequestID {
     ID_GET_MEETING_GROUP_MESSAGES_RESPONSE = 1035,
     ID_GET_MEETING_PRIVATE_MESSAGES_REQUEST = 1036,
     ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE = 1037,
+    ID_MEDIA_OFFER_REQUEST = 1038,
+    ID_MEDIA_CANDIDATE_REQUEST = 1039,
 };
 
 enum ErrorCodes

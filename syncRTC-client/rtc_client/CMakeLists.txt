@@ -7,7 +7,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
 option(SYNCRTC_ENABLE_FFMPEG "Enable FFmpeg codec dependencies" ON)
-option(SYNCRTC_ENABLE_NATIVE_MEDIA_STACK "Enable libdatachannel WebRTC media dependencies" OFF)
+
+if(WIN32)
+    set(SYNCRTC_LIBDATACHANNEL_ROOT "E:/deps/libdatachannel-0.24.5-mingw1120-static"
+        CACHE PATH "libdatachannel install root")
+    set(SYNCRTC_OPENSSL_ROOT "D:/Qt6/Tools/mingw1120_64/opt"
+        CACHE PATH "OpenSSL root used by the Qt MinGW toolchain")
+
+    if(EXISTS "${SYNCRTC_LIBDATACHANNEL_ROOT}/lib/cmake/LibDataChannel/LibDataChannelConfig.cmake")
+        list(APPEND CMAKE_PREFIX_PATH "${SYNCRTC_LIBDATACHANNEL_ROOT}")
+    endif()
+
+    if(EXISTS "${SYNCRTC_OPENSSL_ROOT}/include/openssl/ssl.h")
+        set(OPENSSL_ROOT_DIR "${SYNCRTC_OPENSSL_ROOT}" CACHE PATH "OpenSSL root" FORCE)
+    endif()
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg Network Multimedia)
 
@@ -16,20 +30,19 @@ if(SYNCRTC_ENABLE_FFMPEG)
     include_directories(${FFMPEG_INCLUDE_DIR})
 endif()
 
-if(SYNCRTC_ENABLE_NATIVE_MEDIA_STACK)
-    if(NOT SYNCRTC_ENABLE_FFMPEG)
-        message(FATAL_ERROR "SYNCRTC_ENABLE_NATIVE_MEDIA_STACK requires SYNCRTC_ENABLE_FFMPEG=ON.")
-    endif()
+if(NOT SYNCRTC_ENABLE_FFMPEG)
+    message(FATAL_ERROR "The media stack requires SYNCRTC_ENABLE_FFMPEG=ON.")
+endif()
 
-    find_package(LibDataChannel CONFIG QUIET)
-    if(NOT LibDataChannel_FOUND)
-        find_package(libdatachannel CONFIG QUIET)
-    endif()
-    if(NOT TARGET LibDataChannel::LibDataChannel AND NOT TARGET datachannel)
-        message(FATAL_ERROR
-            "libdatachannel was not found. Install it with a CMake config package "
-            "or pass its install prefix with -DCMAKE_PREFIX_PATH=<path>.")
-    endif()
+find_package(OpenSSL REQUIRED)
+find_package(LibDataChannel CONFIG QUIET)
+if(NOT LibDataChannel_FOUND)
+    find_package(libdatachannel CONFIG QUIET)
+endif()
+if(NOT TARGET LibDataChannel::LibDataChannel AND NOT TARGET datachannel)
+    message(FATAL_ERROR
+        "libdatachannel was not found. Install it with a CMake config package "
+        "or pass its install prefix with -DCMAKE_PREFIX_PATH=<path>.")
 endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -96,6 +109,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/contacts/contactscontroller.h core/src/controllers/contacts/contactscontroller.cpp
         SOURCES core/src/media/media_stack_probe.cpp
         SOURCES core/src/media/mediacontroller.h core/src/media/mediacontroller.cpp
+        SOURCES core/src/media/mediasession.h core/src/media/mediasession.cpp
         SOURCES core/src/media/mediadevicecapture.h core/src/media/mediadevicecapture.cpp
         SOURCES core/src/media/mediastreamprocessor.h core/src/media/mediastreamprocessor.cpp
         SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
@@ -132,13 +146,10 @@ if(SYNCRTC_ENABLE_FFMPEG)
     target_link_libraries(apprtc_client PRIVATE FFmpeg::FFmpeg)
 endif()
 
-if(SYNCRTC_ENABLE_NATIVE_MEDIA_STACK)
-    target_compile_definitions(apprtc_client PRIVATE SYNCRTC_NATIVE_MEDIA_STACK=1)
-    if(TARGET LibDataChannel::LibDataChannel)
-        target_link_libraries(apprtc_client PRIVATE LibDataChannel::LibDataChannel)
-    else()
-        target_link_libraries(apprtc_client PRIVATE datachannel)
-    endif()
+if(TARGET LibDataChannel::LibDataChannel)
+    target_link_libraries(apprtc_client PRIVATE LibDataChannel::LibDataChannel)
+else()
+    target_link_libraries(apprtc_client PRIVATE datachannel)
 endif()
 
 if(WIN32)

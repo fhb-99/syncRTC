@@ -1,6 +1,5 @@
 #include <QtGlobal>
 
-#if defined(SYNCRTC_NATIVE_MEDIA_STACK)
 #include "../models/global.h"
 
 #include <QAudioSource>
@@ -27,4 +26,3 @@ namespace {
 }
 
 } // namespace
-#endif

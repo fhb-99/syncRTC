@@ -1,36 +1,84 @@
 #include "mediacontroller.h"
 
 #include "mediadevicecapture.h"
+#include "mediasession.h"
 #include "mediastreamprocessor.h"
+#include "../network/tcpmgr.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MediaController::MediaController(QObject *parent)
     : QObject{parent}
     , m_deviceCapture(std::make_unique<MediaDeviceCapture>(this))
+    , m_mediaSession(std::make_unique<MediaSession>(this))
     , m_streamProcessor(std::make_unique<MediaStreamProcessor>(this))
 {
+    connect(m_mediaSession.get(), &MediaSession::localOfferReady,
+            this, &MediaController::slotLocalOfferReady);
+    connect(m_mediaSession.get(), &MediaSession::localCandidateReady,
+            this, &MediaController::slotLocalCandidateReady);
 }
 
 MediaController::~MediaController() = default;
 
-void MediaController::requestOpenCamera()
+void MediaController::slotLocalOfferReady(const QString &meetingId, const QString &sdp)
+{
+    QJsonObject request;
+    request["meeting_id"] = meetingId;
+    request["type"] = QStringLiteral("offer");
+    request["sdp"] = sdp;
+
+    // offer 属于媒体协商信令，仍然复用现有 RealtimeServer TCP 控制链路发送。
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_MEDIA_OFFER_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+void MediaController::slotLocalCandidateReady(const QString &meetingId,
+                                              const QString &candidate,
+                                              const QString &mid)
+{
+    QJsonObject request;
+    request["meeting_id"] = meetingId;
+    request["candidate"] = candidate;
+    request["mid"] = mid;
+
+    // candidate 同样只走控制链路，真正音视频数据不经过 RealtimeServer。
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_MEDIA_CANDIDATE_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+void MediaController::requestOpenCamera(const QString &meetingId)
 {
     if (m_cameraEnabled) {
         return;
     }
 
+    connect(m_deviceCapture.get(), &MediaDeviceCapture::videoFrameCaptured,
+            m_streamProcessor.get(),
+            static_cast<void (MediaStreamProcessor::*)(const QVideoFrame &)>(
+                &MediaStreamProcessor::processVideoFrame),
+            Qt::UniqueConnection);
+
+    // 开启视频编码和封装处理，采集到的帧会通过上面的信号进入处理器。
+    m_streamProcessor->startVideo();
+
     if (!m_deviceCapture->startCamera()) {
+        m_streamProcessor->stopVideo();
         emit mediaError(QStringLiteral("摄像头启动失败，请检查设备或权限"));
         return;
     }
 
-    // 后续视频编码和 RTP 封装链路从这里接入，当前 MediaStreamProcessor 只保留接口。
-    m_streamProcessor->startVideo();
+    // 创建媒体会话并生成 offer/candidate，仍然通过 TcpMgr 走控制链路发送。
+    m_mediaSession->startMediaSession(meetingId);
+
     m_cameraEnabled = true;
     emit cameraEnabledChanged();
 }
 
-void MediaController::requestCloseCamera()
+void MediaController::requestCloseCamera(const QString &meetingId)
 {
+    Q_UNUSED(meetingId)
     if (!m_cameraEnabled) {
         return;
     }
@@ -72,6 +120,7 @@ void MediaController::requestCloseMicrophone()
 
 void MediaController::requestStopAll()
 {
+    m_mediaSession->stopMediaSession();
     m_streamProcessor->stopAll();
     m_deviceCapture->stopAll();
 

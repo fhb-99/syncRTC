@@ -35,6 +35,9 @@ bool MediaDeviceCapture::startCamera()
     }
 
     m_videoSink = std::make_unique<QVideoSink>();
+    connect(m_videoSink.get(), &QVideoSink::videoFrameChanged,
+            this, &MediaDeviceCapture::videoFrameCaptured);
+
     m_camera = std::make_unique<QCamera>(device);
     m_captureSession->setCamera(m_camera.get());
     m_captureSession->setVideoSink(m_videoSink.get());

@@ -2,6 +2,7 @@
 #define MEDIADEVICECAPTURE_H
 
 #include <QObject>
+#include <QVideoFrame>
 
 #include <memory>
 
@@ -23,6 +24,9 @@ public:
     bool startMicrophone();
     void stopMicrophone();
     void stopAll();
+
+signals:
+    void videoFrameCaptured(const QVideoFrame &frame);
 
 private:
     std::unique_ptr<QMediaCaptureSession> m_captureSession;

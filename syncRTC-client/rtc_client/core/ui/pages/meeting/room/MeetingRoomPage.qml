@@ -41,8 +41,8 @@ Item {
     signal leaveRequested()
     signal openMicrophoneRequested()
     signal closeMicrophoneRequested()
-    signal openCameraRequested()
-    signal closeCameraRequested()
+    signal openCameraRequested(string meetingId)
+    signal closeCameraRequested(string meetingId)
 
     function avatarText(name) {
         var value = name.trim()
@@ -111,9 +111,9 @@ Item {
 
         root.cameraEnabled = enabled
         if (enabled)
-            root.openCameraRequested()
+            root.openCameraRequested(root.meetingId)
         else
-            root.closeCameraRequested()
+            root.closeCameraRequested(root.meetingId)
     }
 
     function currentChatPeerId() {

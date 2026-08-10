@@ -5,25 +5,14 @@ MediaTransportMgr::MediaTransportMgr(QObject *parent)
 {
 }
 
-void MediaTransportMgr::startMediaSession(const QString &meetingId)
-{
-    Q_UNUSED(meetingId)
-    // 预留：后续在这里建立媒体传输会话。
-}
-
-void MediaTransportMgr::stopMediaSession()
-{
-    // 预留：后续在这里关闭媒体传输会话。
-}
-
 void MediaTransportMgr::sendVideoRtp(const QByteArray &packet)
 {
     Q_UNUSED(packet)
-    // 预留：后续在这里发送视频 RTP 包。
+    // 预留：后续只负责把视频 RTP 包写入已经建立好的 WebRTC track。
 }
 
 void MediaTransportMgr::sendAudioRtp(const QByteArray &packet)
 {
     Q_UNUSED(packet)
-    // 预留：后续在这里发送音频 RTP 包。
+    // 预留：后续只负责把音频 RTP 包写入已经建立好的 WebRTC track。
 }
