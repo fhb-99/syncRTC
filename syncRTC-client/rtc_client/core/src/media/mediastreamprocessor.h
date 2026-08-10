@@ -4,12 +4,7 @@
 #include <QObject>
 
 #include <QtGlobal>
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/opt.h>
-#include <libavutil/pixfmt.h>
-}
+#include "../models/global.h"
 
 class MediaStreamProcessor : public QObject
 {

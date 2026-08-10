@@ -1,18 +1,12 @@
 #include <QtGlobal>
 
 #if defined(SYNCRTC_NATIVE_MEDIA_STACK)
+#include "../models/global.h"
+
 #include <QAudioSource>
 #include <QCamera>
 #include <QMediaCaptureSession>
 #include <QVideoSink>
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/avutil.h>
-#include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
-}
 
 #if __has_include(<rtc/rtc.hpp>)
 #include <rtc/rtc.hpp>
