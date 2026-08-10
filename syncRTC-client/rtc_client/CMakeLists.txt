@@ -98,7 +98,6 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/media/mediacontroller.h core/src/media/mediacontroller.cpp
         SOURCES core/src/media/mediadevicecapture.h core/src/media/mediadevicecapture.cpp
         SOURCES core/src/media/mediastreamprocessor.h core/src/media/mediastreamprocessor.cpp
-        SOURCES core/src/media/mediastreamsender.h core/src/media/mediastreamsender.cpp
         SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
 )
 
