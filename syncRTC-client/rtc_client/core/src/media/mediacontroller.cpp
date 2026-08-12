@@ -3,6 +3,7 @@
 #include "mediadevicecapture.h"
 #include "mediasession.h"
 #include "mediastreamprocessor.h"
+#include "../network/mediatransportmgr.h"
 #include "../network/tcpmgr.h"
 
 #include <QJsonDocument>
@@ -72,6 +73,7 @@ void MediaController::requestOpenCamera(const QString &meetingId)
     // 创建媒体会话并生成 offer/candidate，仍然通过 TcpMgr 走控制链路发送。
     m_mediaSession->startMediaSession(meetingId);
 
+    MediaTransportMgr::GetInstance()->setVideoTrack(m_mediaSession->videoTrack());
     m_cameraEnabled = true;
     emit cameraEnabledChanged();
 }
@@ -85,6 +87,7 @@ void MediaController::requestCloseCamera(const QString &meetingId)
 
     m_streamProcessor->stopVideo();
     m_deviceCapture->stopCamera();
+    MediaTransportMgr::GetInstance()->clearVideoTrack();
     m_cameraEnabled = false;
     emit cameraEnabledChanged();
 }
@@ -120,6 +123,7 @@ void MediaController::requestCloseMicrophone()
 
 void MediaController::requestStopAll()
 {
+    MediaTransportMgr::GetInstance()->clearVideoTrack();
     m_mediaSession->stopMediaSession();
     m_streamProcessor->stopAll();
     m_deviceCapture->stopAll();

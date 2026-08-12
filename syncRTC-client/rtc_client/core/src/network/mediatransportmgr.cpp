@@ -1,18 +1,39 @@
 #include "mediatransportmgr.h"
 
+#include <rtc/track.hpp>
+
 MediaTransportMgr::MediaTransportMgr(QObject *parent)
     : QObject(parent)
 {
 }
 
+void MediaTransportMgr::setVideoTrack(const std::shared_ptr<rtc::Track> &track)
+{
+    m_videoTrack = track;
+}
+
+void MediaTransportMgr::clearVideoTrack()
+{
+    m_videoTrack.reset();
+}
+
 void MediaTransportMgr::sendVideoRtp(const QByteArray &packet)
 {
-    Q_UNUSED(packet)
-    // 预留：后续只负责把视频 RTP 包写入已经建立好的 WebRTC track。
+    if (packet.isEmpty()) {
+        return;
+    }
+
+    const auto track = m_videoTrack.lock();
+    if (!track || !track->isOpen()) {
+        return;
+    }
+
+    track->send(reinterpret_cast<const rtc::byte *>(packet.constData()),
+                static_cast<size_t>(packet.size()));
 }
 
 void MediaTransportMgr::sendAudioRtp(const QByteArray &packet)
 {
     Q_UNUSED(packet)
-    // 预留：后续只负责把音频 RTP 包写入已经建立好的 WebRTC track。
+    // 音频 RTP 发送后续接入。
 }

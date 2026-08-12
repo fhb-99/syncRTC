@@ -23,6 +23,7 @@ public:
     void stopMediaSession();
     void setRemoteDescription(const QString &sdp, const QString &type);
     void addRemoteCandidate(const QString &candidate, const QString &mid);
+    std::shared_ptr<rtc::Track> videoTrack() const;
 
 signals:
     // offer/candidate 仍走现有 RealtimeServer 控制链路，不由传输类直接发送。

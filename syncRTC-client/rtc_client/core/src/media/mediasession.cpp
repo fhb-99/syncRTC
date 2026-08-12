@@ -13,6 +13,11 @@ MediaSession::MediaSession(QObject *parent)
 
 MediaSession::~MediaSession() = default;
 
+std::shared_ptr<rtc::Track> MediaSession::videoTrack() const
+{
+    return m_videoTrack;
+}
+
 void MediaSession::startMediaSession(const QString &meetingId)
 {
     m_meetingId = meetingId;
