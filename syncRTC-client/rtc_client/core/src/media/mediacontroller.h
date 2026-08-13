@@ -6,6 +6,7 @@
 
 #include <memory>
 
+class QJsonObject;
 class MediaDeviceCapture;
 class MediaSession;
 class MediaStreamProcessor;
@@ -27,6 +28,9 @@ public:
     Q_INVOKABLE void requestOpenMicrophone();
     Q_INVOKABLE void requestCloseMicrophone();
     Q_INVOKABLE void requestStopAll();
+
+    Q_INVOKABLE bool applyMediaAnswer(const QJsonObject &json);
+    Q_INVOKABLE bool applyMediaCandidate(const QJsonObject &json);
 
 signals:
     void cameraEnabledChanged();

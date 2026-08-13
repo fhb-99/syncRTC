@@ -62,6 +62,7 @@ int main(int argc, char *argv[])
     RealtimeController realtimeController(&currentUser);
     ContactsController contactsController(&currentUser, &clientSession);
     MediaController mediaController;
+    realtimeController.setMediaController(&mediaController);
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);

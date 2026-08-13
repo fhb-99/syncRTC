@@ -23,6 +23,34 @@ MediaController::MediaController(QObject *parent)
 
 MediaController::~MediaController() = default;
 
+bool MediaController::applyMediaAnswer(const QJsonObject &json)
+{
+    // answer 是对端返回的 SDP，会告诉本地 PeerConnection 最终采用的媒体参数。
+    const QString sdp = json.value("sdp").toString();
+    const QString type = json.value("type").toString(QStringLiteral("answer"));
+    if (sdp.isEmpty()) {
+        return false;
+    }
+
+    // MediaController 只解析业务字段，真正的 WebRTC 对象操作交给 MediaSession。
+    m_mediaSession->setRemoteDescription(sdp, type);
+    return true;
+}
+
+bool MediaController::applyMediaCandidate(const QJsonObject &json)
+{
+    // candidate 是 ICE 候选地址，用来告诉 PeerConnection 可以尝试哪条网络路径。
+    const QString candidate = json.value("candidate").toString();
+    const QString mid = json.value("mid").toString();
+    if (candidate.isEmpty() || mid.isEmpty()) {
+        return false;
+    }
+
+    // mid 用来标识 candidate 属于哪一路媒体，例如 video 或 audio。
+    m_mediaSession->addRemoteCandidate(candidate, mid);
+    return true;
+}
+
 void MediaController::slotLocalOfferReady(const QString &meetingId, const QString &sdp)
 {
     QJsonObject request;

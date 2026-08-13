@@ -57,14 +57,14 @@ void MediaSession::stopMediaSession()
 
 void MediaSession::setRemoteDescription(const QString &sdp, const QString &type)
 {
-    Q_UNUSED(sdp)
-    Q_UNUSED(type)
-    // 预留：接收 MediaServer 经 RealtimeServer 返回的 answer。
+    // SDP 是整场 WebRTC 协商的说明书：包含编解码器、媒体方向、DTLS 指纹等信息。
+    m_peerConnection->setRemoteDescription(
+        rtc::Description(sdp.toStdString(), type.toStdString()));
 }
 
 void MediaSession::addRemoteCandidate(const QString &candidate, const QString &mid)
 {
-    Q_UNUSED(candidate)
-    Q_UNUSED(mid)
-    // 预留：接收 MediaServer 经 RealtimeServer 返回的 ICE candidate。
+    // ICE candidate 是对端的可连接地址；设置后 PeerConnection 会尝试打通网络路径。
+    m_peerConnection->addRemoteCandidate(
+        rtc::Candidate(candidate.toStdString(), mid.toStdString()));
 }
