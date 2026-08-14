@@ -89,7 +89,8 @@ bool MediaDeviceCapture::startMicrophone()
     // 当前阶段先把麦克风数据读出并释放，避免缓冲堆积；编码发送后续再接。
     connect(m_audioDevice, &QIODevice::readyRead, this, [this]() {
         if (m_audioDevice) {
-            m_audioDevice->readAll();
+            // readAll() 读到的是麦克风采集出的 PCM 原始音频数据，还没有经过压缩编码。
+            emit audioPcmDataCaptured(m_audioDevice->readAll());
         }
     });
     return true;

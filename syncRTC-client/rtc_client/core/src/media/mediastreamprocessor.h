@@ -27,6 +27,7 @@ public:
 
     void processVideoFrame(const QVideoFrame &frame);
     void processVideoFrame(AVFrame * frame);
+    void processAudioPcmData(const QByteArray &pcmData);
 
     // 初始化编码器
     void startVideo();
@@ -48,6 +49,10 @@ private:
     // 封装函数相关
     std::shared_ptr<rtc::RtpPacketizationConfig> m_videoRtpConfig;
     std::shared_ptr<rtc::H264RtpPacketizer> m_videoPacketizer;
+
+    // 音频
+    // 暂存麦克风采集到的 PCM 原始数据，后续 Opus 编码会从这里按固定时长取走。
+    QByteArray m_audioPcmBuffer;
 };
 
 #endif // MEDIASTREAMPROCESSOR_H

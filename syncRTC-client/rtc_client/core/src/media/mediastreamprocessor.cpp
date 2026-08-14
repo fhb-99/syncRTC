@@ -201,6 +201,12 @@ void MediaStreamProcessor::processVideoFrame(AVFrame *frame)
     }
 }
 
+void MediaStreamProcessor::processAudioPcmData(const QByteArray &pcmData)
+{
+    // 这里先只做缓存：PCM 还不能直接发送，后续会按 20ms 左右切片再编码成 Opus。
+    m_audioPcmBuffer.append(pcmData);
+}
+
 void MediaStreamProcessor::startVideo()
 {
     // 预留：视频帧编码和 RTP 封装后续在这里接入
@@ -281,11 +287,13 @@ void MediaStreamProcessor::stopVideo()
 void MediaStreamProcessor::startAudio()
 {
     // 预留：音频 PCM 编码和 RTP 封装后续在这里接入。
+    m_audioPcmBuffer.clear();
 }
 
 void MediaStreamProcessor::stopAudio()
 {
     // 预留：关闭音频编码和封装链路。
+    m_audioPcmBuffer.clear();
 }
 
 void MediaStreamProcessor::stopAll()

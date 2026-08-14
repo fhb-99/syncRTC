@@ -126,13 +126,19 @@ void MediaController::requestOpenMicrophone()
         return;
     }
 
+    connect(m_deviceCapture.get(), &MediaDeviceCapture::audioPcmDataCaptured,
+            m_streamProcessor.get(), &MediaStreamProcessor::processAudioPcmData,
+            Qt::UniqueConnection);
+
+    // 先准备音频处理侧的 PCM 缓冲区，再启动麦克风采集。
+    m_streamProcessor->startAudio();
+
     if (!m_deviceCapture->startMicrophone()) {
+        m_streamProcessor->stopAudio();
         emit mediaError(QStringLiteral("麦克风启动失败，请检查设备或权限"));
         return;
     }
 
-    // 后续音频编码和 RTP 封装链路从这里接入，当前 MediaStreamProcessor 只保留接口。
-    m_streamProcessor->startAudio();
     m_microphoneEnabled = true;
     emit microphoneEnabledChanged();
 }

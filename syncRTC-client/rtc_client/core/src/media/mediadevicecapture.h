@@ -1,6 +1,7 @@
 #ifndef MEDIADEVICECAPTURE_H
 #define MEDIADEVICECAPTURE_H
 
+#include <QByteArray>
 #include <QObject>
 #include <QVideoFrame>
 
@@ -27,6 +28,7 @@ public:
 
 signals:
     void videoFrameCaptured(const QVideoFrame &frame);
+    void audioPcmDataCaptured(const QByteArray &pcmData);
 
 private:
     std::unique_ptr<QMediaCaptureSession> m_captureSession;
