@@ -72,11 +72,13 @@ bool MediaDeviceCapture::startMicrophone()
         return false;
     }
 
-    QAudioFormat format = device.preferredFormat();
-    if (!format.isValid()) {
-        format.setSampleRate(48000);
-        format.setChannelCount(1);
-        format.setSampleFormat(QAudioFormat::Int16);
+    QAudioFormat format;
+    format.setSampleRate(48000);
+    format.setChannelCount(1);
+    format.setSampleFormat(QAudioFormat::Int16);
+    if (!device.isFormatSupported(format)) {
+        qWarning() << "Microphone does not support 48000Hz mono Int16 PCM";
+        return false;
     }
 
     m_audioSource = std::make_unique<QAudioSource>(device, format);

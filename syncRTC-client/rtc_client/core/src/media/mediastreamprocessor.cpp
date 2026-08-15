@@ -46,13 +46,19 @@ AVPixelFormat qtPixelFormatToAvPixelFormat(QVideoFrameFormat::PixelFormat format
     }
 }
 
+constexpr int AudioSampleRate = 48000;
+constexpr int AudioFrameSamples = AudioSampleRate * 20 / 1000;
+constexpr int AudioFrameBytes = AudioFrameSamples * int(sizeof(qint16));
+
 }
 
 
 MediaStreamProcessor::MediaStreamProcessor(QObject *parent)
     : QObject(parent),
     m_videoCodecCtx(nullptr),
-    m_videoPacket(nullptr)
+    m_videoPacket(nullptr),
+    m_audioCodecCtx(nullptr),
+    m_audioPacket(nullptr)
 {
 
 }
@@ -203,8 +209,68 @@ void MediaStreamProcessor::processVideoFrame(AVFrame *frame)
 
 void MediaStreamProcessor::processAudioPcmData(const QByteArray &pcmData)
 {
-    // 这里先只做缓存：PCM 还不能直接发送，后续会按 20ms 左右切片再编码成 Opus。
+    if (!m_audioStarted) {
+        return;
+    }
+
+    // 麦克风 readAll() 每次给的数据长度不固定，先放进缓冲区，攒够20ms再处理。
     m_audioPcmBuffer.append(pcmData);
+
+    while (m_audioPcmBuffer.size() >= AudioFrameBytes) {
+        // 20ms单声道Int16 PCM：48000 * 0.02 * 2 = 1920字节。
+        QByteArray pcmFrame = m_audioPcmBuffer.left(AudioFrameBytes);
+        m_audioPcmBuffer.remove(0, AudioFrameBytes);
+
+        AVFrame *audioFrame = av_frame_alloc();
+        audioFrame->nb_samples = AudioFrameSamples;
+        audioFrame->format = m_audioCodecCtx->sample_fmt;
+        audioFrame->sample_rate = m_audioCodecCtx->sample_rate;
+        av_channel_layout_copy(&audioFrame->ch_layout, &m_audioCodecCtx->ch_layout);
+
+        if (av_frame_get_buffer(audioFrame, 0) < 0) {
+            av_frame_free(&audioFrame);
+            return;
+        }
+
+        // 采集侧给的是Int16 PCM，FFmpeg原生Opus编码器需要FLTP，这里转成float平面数据。
+        const qint16 *src = reinterpret_cast<const qint16 *>(pcmFrame.constData());
+        float *dst = reinterpret_cast<float *>(audioFrame->data[0]);
+        for (int i = 0; i < AudioFrameSamples; ++i) {
+            dst[i] = float(src[i]) / 32768.0f;
+        }
+
+        audioFrame->pts = m_audioPts;
+        m_audioPts += audioFrame->nb_samples;
+
+        avcodec_send_frame(m_audioCodecCtx, audioFrame);
+        av_frame_free(&audioFrame);
+
+        while (avcodec_receive_packet(m_audioCodecCtx, m_audioPacket) == 0) {
+            rtc::binary sample(
+                reinterpret_cast<const rtc::byte *>(m_audioPacket->data),
+                reinterpret_cast<const rtc::byte *>(m_audioPacket->data + m_audioPacket->size)
+                );
+
+            auto frameInfo = std::make_shared<rtc::FrameInfo>(m_audioTimestamp);
+            rtc::message_vector messages;
+            messages.push_back(rtc::make_message(sample.begin(), sample.end(), frameInfo));
+
+            // Opus音频通常一帧就是一个RTP包，packetizer负责补RTP头、序号和时间戳。
+            m_audioPacketizer->outgoing(messages, [](rtc::message_ptr) {});
+
+            for (const rtc::message_ptr &message : messages) {
+                MediaTransportMgr::GetInstance()->sendAudioRtp(QByteArray(
+                    reinterpret_cast<const char *>(message->data()),
+                    int(message->size())
+                    ));
+            }
+
+            av_packet_unref(m_audioPacket);
+        }
+
+        // 48kHz下20ms等于960个采样点，因此RTP时间戳每帧递增960。
+        m_audioTimestamp += AudioFrameSamples;
+    }
 }
 
 void MediaStreamProcessor::startVideo()
@@ -286,14 +352,69 @@ void MediaStreamProcessor::stopVideo()
 
 void MediaStreamProcessor::startAudio()
 {
-    // 预留：音频 PCM 编码和 RTP 封装后续在这里接入。
+    if (m_audioStarted) {
+        return;
+    }
+
+    // WebRTC 音频统一使用 Opus，Opus 的 RTP 时间戳时钟固定按 48000Hz 计算。
+    // 根据编码ID查找FFmpeg OPUS编码器实现
+    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+    // 分配音频编码器上下文，承载全部编码参数与编码器运行状态
+    m_audioCodecCtx = avcodec_alloc_context3(codec);
+
+    // 采样率：48000Hz，OPUS原生标准采样率，WebRTC音频强制使用48kHz
+    m_audioCodecCtx->sample_rate = AudioSampleRate;
+    // 音频采样格式：FLTP(float planar)浮点平面格式，FFmpeg OPUS编码器要求的输入格式
+    m_audioCodecCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    // 编码码率：32kbps，适合网络语音通话场景
+    m_audioCodecCtx->bit_rate = 32000;
+    // 时间基 1/48000 s，用于计算音频AVFrame的PTS时间戳
+    m_audioCodecCtx->time_base = AVRational{1, AudioSampleRate};
+    // 设置声道布局，参数1 = 单声道Mono，WebRTC通话普遍使用单声道节省带宽
+    av_channel_layout_default(&m_audioCodecCtx->ch_layout, 1);
+
+    // 根据上面配置的参数打开、初始化OPUS编码器
+    avcodec_open2(m_audioCodecCtx, codec, nullptr);
+
+    // 分配AVPacket，用于接收编码器输出的OPUS编码码流
+    m_audioPacket = av_packet_alloc();
+    // 音频PTS初始计数器，每送入一帧音频采样后递增，标记帧时序
+    m_audioPts = 0;
+    m_audioTimestamp = 0;
+
+    const uint32_t audioSsrc = 654321;       // RTP流SSRC，整条音频流唯一标识
+    const uint8_t payloadType = 111;         // RTP payload type，Opus常用动态PT
+    const std::string cname = "audio";       // RTCP CNAME标识
+
+    m_audioRtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+        audioSsrc,
+        cname,
+        payloadType,
+        rtc::OpusRtpPacketizer::DefaultClockRate
+        );
+    m_audioPacketizer = std::make_shared<rtc::OpusRtpPacketizer>(m_audioRtpConfig);
+
+    // PCM音频缓冲清空：用来缓存麦克风采集到的零散PCM采样，攒够固定时长(20ms)再编码
     m_audioPcmBuffer.clear();
+    // 标记音频编码器初始化完成，允许接收PCM音频数据开始编码
+    m_audioStarted = true;
 }
 
 void MediaStreamProcessor::stopAudio()
 {
-    // 预留：关闭音频编码和封装链路。
+    if (!m_audioStarted) {
+        return;
+    }
+
+    av_packet_free(&m_audioPacket);
+    avcodec_free_context(&m_audioCodecCtx);
+    m_audioPacketizer.reset();
+    m_audioRtpConfig.reset();
+
+    m_audioPts = 0;
+    m_audioTimestamp = 0;
     m_audioPcmBuffer.clear();
+    m_audioStarted = false;
 }
 
 void MediaStreamProcessor::stopAll()
