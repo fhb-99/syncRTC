@@ -24,6 +24,7 @@ public:
     void setRemoteDescription(const QString &sdp, const QString &type);
     void addRemoteCandidate(const QString &candidate, const QString &mid);
     std::shared_ptr<rtc::Track> videoTrack() const;
+    std::shared_ptr<rtc::Track> audioTrack() const;
 
 signals:
     // offer/candidate 仍走现有 RealtimeServer 控制链路，不由传输类直接发送。
@@ -35,6 +36,7 @@ private:
     QString m_meetingId;
     std::shared_ptr<rtc::PeerConnection> m_peerConnection;
     std::shared_ptr<rtc::Track> m_videoTrack;
+    std::shared_ptr<rtc::Track> m_audioTrack;
 };
 
 #endif // MEDIASESSION_H

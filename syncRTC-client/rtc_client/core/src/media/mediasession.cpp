@@ -18,6 +18,11 @@ std::shared_ptr<rtc::Track> MediaSession::videoTrack() const
     return m_videoTrack;
 }
 
+std::shared_ptr<rtc::Track> MediaSession::audioTrack() const
+{
+    return m_audioTrack;
+}
+
 void MediaSession::startMediaSession(const QString &meetingId)
 {
     m_meetingId = meetingId;
@@ -42,8 +47,13 @@ void MediaSession::startMediaSession(const QString &meetingId)
     video.addH264Codec(96);
     video.addSSRC(123456, "video", "syncRTC", "video");
 
-    // 当前只创建视频发送轨道；offer/candidate 仍由上层通过 TcpMgr 发给 RealtimeServer。
+    rtc::Description::Audio audio("audio");
+    audio.addOpusCodec(111);
+    audio.addSSRC(654321, "audio", "syncRTC", "audio");
+
+    // 创建音视频发送轨道；offer/candidate 仍由上层通过 TcpMgr 发给 RealtimeServer。
     m_videoTrack = m_peerConnection->addTrack(video);
+    m_audioTrack = m_peerConnection->addTrack(audio);
     m_peerConnection->setLocalDescription();
 }
 
@@ -51,6 +61,7 @@ void MediaSession::stopMediaSession()
 {
     // 预留：关闭 PeerConnection 和本次媒体会话状态。
     m_videoTrack.reset();
+    m_audioTrack.reset();
     m_peerConnection.reset();
     m_meetingId.clear();
 }

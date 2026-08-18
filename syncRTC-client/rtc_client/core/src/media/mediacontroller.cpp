@@ -102,6 +102,7 @@ void MediaController::requestOpenCamera(const QString &meetingId)
     m_mediaSession->startMediaSession(meetingId);
 
     MediaTransportMgr::GetInstance()->setVideoTrack(m_mediaSession->videoTrack());
+    MediaTransportMgr::GetInstance()->setAudioTrack(m_mediaSession->audioTrack());
     m_cameraEnabled = true;
     emit cameraEnabledChanged();
 }
@@ -139,6 +140,7 @@ void MediaController::requestOpenMicrophone()
         return;
     }
 
+    MediaTransportMgr::GetInstance()->setAudioTrack(m_mediaSession->audioTrack());
     m_microphoneEnabled = true;
     emit microphoneEnabledChanged();
 }
@@ -151,12 +153,14 @@ void MediaController::requestCloseMicrophone()
 
     m_streamProcessor->stopAudio();
     m_deviceCapture->stopMicrophone();
+    MediaTransportMgr::GetInstance()->clearAudioTrack();
     m_microphoneEnabled = false;
     emit microphoneEnabledChanged();
 }
 
 void MediaController::requestStopAll()
 {
+    MediaTransportMgr::GetInstance()->clearAudioTrack();
     MediaTransportMgr::GetInstance()->clearVideoTrack();
     m_mediaSession->stopMediaSession();
     m_streamProcessor->stopAll();
