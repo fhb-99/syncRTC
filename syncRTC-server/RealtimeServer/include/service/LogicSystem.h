@@ -64,6 +64,9 @@ private:
     void SendMeetingMessageHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void GetMeetingGroupMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void GetMeetingPrivateMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    // 媒体信令处理先预留接口，后续再接入 MediaServer 转发链路。
+    void MediaOfferHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void MediaCandidateHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void SessionDisconnectedHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void ReconnectTimeoutCheckHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 

@@ -277,6 +277,14 @@ void LogicSystem::initHandlers()
         GetMeetingPrivateMessagesHandler(session, id, message);
     };
 
+    maps[ID_MEDIA_OFFER_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        MediaOfferHandler(session, id, message);
+    };
+
+    maps[ID_MEDIA_CANDIDATE_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        MediaCandidateHandler(session, id, message);
+    };
+
     maps[kSessionDisconnectedEventId] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         SessionDisconnectedHandler(session, id, message);
     };
@@ -1402,7 +1410,6 @@ void LogicSystem::SendMeetingMessageHandler(std::shared_ptr<Session> session, st
     }
 }
 
-
 void LogicSystem::GetMeetingGroupMessagesHandler(std::shared_ptr<Session> session,
                                                  std::uint16_t&,
                                                  std::string& message)
@@ -1586,4 +1593,149 @@ void LogicSystem::GetMeetingPrivateMessagesHandler(std::shared_ptr<Session> sess
 
     value["error"] = ErrorCodes::SUCCESS;
     value["messages"] = std::move(json_messages);
+}
+
+void LogicSystem::MediaOfferHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    bool need_reply = true;
+    // 校验失败时直接用 answer 响应带回错误码；校验通过后交给 MediaServer 异步返回 answer。
+    Defer defer([&value, session, &need_reply](){
+        if (need_reply) {
+            session->Send(ID_MEDIA_ANSWER_RESPONSE, value.toStyledString());
+        }
+    });
+
+    // offer 必须带会议号、信令类型和 SDP；SDP 内容本身后续由 MediaServer 理解。
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() ||
+        !root.isMember("meeting_id") || !root["type"].isString() || !root["sdp"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    std::uint64_t meeting_id = 0;
+    if (!ReadUInt64Value(root["meeting_id"], meeting_id) || meeting_id == 0 ||
+        root["type"].asString() != "offer" || root["sdp"].asString().empty()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    // 只相信登录后绑定在 Session 上的 uid，不使用客户端在 JSON 中自报的身份。
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+    if (session->GetMeetingId() != meeting_id) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    // Redis 房间成员表示当前实时在会；没有在房间里就不能发布媒体信令。
+    const std::string room_key = RoomMembersKey(meeting_id);
+    if (!RedisMgr::GetInstance()->SIsMember(room_key, std::to_string(uid))) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    // MySQL 会议状态负责生命周期判断，只有进行中的会议才允许建立媒体链路。
+    MeetingInfo meeting_info;
+    if (!MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+    if (meeting_info.status != MeetingStatus::kInProgress) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+
+    Json::Value media_request;
+    media_request["meeting_id"] = std::to_string(meeting_id);
+    media_request["uid"] = uid;
+    media_request["signal_type"] = "offer";
+    media_request["sdp"] = root["sdp"].asString();
+
+    // TODO: MediaServer 框架搭好后，在这里转发 media_request，并等待 answer 回给客户端。
+    (void)media_request;
+    // 已经通过 RealtimeServer 校验，但 MediaServer 尚未接入；此时不能伪造成功 answer。
+    need_reply = false;
+}
+
+void LogicSystem::MediaCandidateHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Value value;
+    bool need_reply = true;
+    // 校验失败时直接用 candidate 响应带回错误码；校验通过后再由 MediaServer 决定是否回传候选。
+    Defer defer([&value, session, &need_reply](){
+        if (need_reply) {
+            session->Send(ID_MEDIA_CANDIDATE_RESPONSE, value.toStyledString());
+        }
+    });
+
+    // candidate 信令只校验业务字段是否齐全，不在 RealtimeServer 解析 ICE 内容。
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() ||
+        !root.isMember("meeting_id") || !root["candidate"].isString() || !root["mid"].isString()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    std::uint64_t meeting_id = 0;
+    if (!ReadUInt64Value(root["meeting_id"], meeting_id) || meeting_id == 0 ||
+        root["candidate"].asString().empty() || root["mid"].asString().empty()) {
+        value["error"] = ErrorCodes::ERROR_JSON;
+        return;
+    }
+
+    // 媒体 candidate 必须来自当前登录连接，不能相信客户端传来的 uid。
+    const int uid = session->GetUserId();
+    if (uid <= 0) {
+        value["error"] = ErrorCodes::ERROR_TOKEN;
+        return;
+    }
+    if (session->GetMeetingId() != meeting_id) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    // 只有当前仍在 Redis 房间成员集合里的用户，才允许继续补充媒体候选地址。
+    const std::string room_key = RoomMembersKey(meeting_id);
+    if (!RedisMgr::GetInstance()->SIsMember(room_key, std::to_string(uid))) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+
+    // 会议已经结束或还没开始时，不再接受新的媒体候选。
+    MeetingInfo meeting_info;
+    if (!MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info)) {
+        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+        return;
+    }
+    if (meeting_info.status != MeetingStatus::kInProgress) {
+        value["error"] = ErrorCodes::ERROR_MEETING_STATUS;
+        return;
+    }
+
+    Json::Value media_request;
+    media_request["meeting_id"] = std::to_string(meeting_id);
+    media_request["uid"] = uid;
+    media_request["signal_type"] = "candidate";
+    media_request["candidate"] = root["candidate"].asString();
+    media_request["mid"] = root["mid"].asString();
+
+    // TODO: MediaServer 框架搭好后，在这里转发 media_request，由 MediaServer 决定是否回传 candidate。
+    (void)media_request;
+    // 已经通过业务校验，但当前还没有 MediaServer 转发实现，所以不构造假的远端 candidate。
+    need_reply = false;
 }
