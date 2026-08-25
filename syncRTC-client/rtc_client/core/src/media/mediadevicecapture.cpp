@@ -42,7 +42,8 @@ bool MediaDeviceCapture::startCamera()
     m_captureSession->setCamera(m_camera.get());
     m_captureSession->setVideoSink(m_videoSink.get());
 
-    // 这里只拉起本地采集链路，后续编码/发送可以从 videoSink 继续接入。
+    // QVideoSink 只负责把摄像头帧交给 MediaController。
+    // 后续会按“像素格式转换 -> H.264编码 -> RTP封装 -> WebRTC视频Track”的顺序发送到MediaServer。
     m_camera->start();
     return true;
 }
@@ -88,7 +89,8 @@ bool MediaDeviceCapture::startMicrophone()
         return false;
     }
 
-    // 当前阶段先把麦克风数据读出并释放，避免缓冲堆积；编码发送后续再接。
+    // readyRead 每次拿到的数据长度不固定，先把PCM交给 MediaStreamProcessor。
+    // 处理器会按20ms切片，再完成Opus编码、RTP封装并写入WebRTC音频Track。
     connect(m_audioDevice, &QIODevice::readyRead, this, [this]() {
         if (m_audioDevice) {
             // readAll() 读到的是麦克风采集出的 PCM 原始音频数据，还没有经过压缩编码。

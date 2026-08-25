@@ -51,7 +51,10 @@ void MediaSession::startMediaSession(const QString &meetingId)
     audio.addOpusCodec(111);
     audio.addSSRC(654321, "audio", "syncRTC", "audio");
 
-    // 创建音视频发送轨道；offer/candidate 仍由上层通过 TcpMgr 发给 RealtimeServer。
+    // 这两个Track属于客户端与MediaServer之间的PeerConnection。
+    // addTrack把固定的编解码器、Payload Type和SSRC写入本地offer；MediaServer返回answer并完成ICE后，
+    // Track会进入Open状态。之后写入Track的RTP包会由libdatachannel完成DTLS/SRTP保护并发送给MediaServer。
+    // offer/candidate仍由上层通过TcpMgr发给RealtimeServer，它们只是协商信令，不承载音视频数据。
     m_videoTrack = m_peerConnection->addTrack(video);
     m_audioTrack = m_peerConnection->addTrack(audio);
     m_peerConnection->setLocalDescription();
@@ -59,7 +62,7 @@ void MediaSession::startMediaSession(const QString &meetingId)
 
 void MediaSession::stopMediaSession()
 {
-    // 预留：关闭 PeerConnection 和本次媒体会话状态。
+    // 释放Track后MediaTransportMgr中的弱引用会自动失效，后续采集包不会再进入旧连接。
     m_videoTrack.reset();
     m_audioTrack.reset();
     m_peerConnection.reset();

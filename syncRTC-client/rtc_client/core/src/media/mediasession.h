@@ -18,7 +18,7 @@ public:
     explicit MediaSession(QObject *parent = nullptr);
     ~MediaSession() override;
 
-    // 预留：后续在这里创建 PeerConnection、Track，并生成 offer。
+    // 创建客户端到MediaServer的PeerConnection和音视频发送Track，并生成本地offer。
     void startMediaSession(const QString &meetingId);
     void stopMediaSession();
     void setRemoteDescription(const QString &sdp, const QString &type);

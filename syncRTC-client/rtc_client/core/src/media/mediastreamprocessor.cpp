@@ -195,10 +195,11 @@ void MediaStreamProcessor::processVideoFrame(AVFrame *frame)
             m_videoPacket->size
         );
 
-        // 这里在 MediaStreamProcessor 内部完成 RTP 封装。
-        // 封装可以用 libdatachannel 的 H264RtpPacketizer。
+        // 编码器输出的是一帧H.264 Annex-B数据，packetizer会按NALU大小生成一个或多个完整RTP包。
         QVector<QByteArray> rtpPackets = packetizeH264Frame(h264Frame);
 
+        // 每个QByteArray都已经包含RTP头和H.264负载。
+        // MediaTransportMgr不再修改媒体内容，只把这些包写入与MediaServer协商好的视频Track。
         for (const QByteArray &rtpPacket : rtpPackets) {
             MediaTransportMgr::GetInstance()->sendVideoRtp(rtpPacket);
         }
@@ -258,6 +259,7 @@ void MediaStreamProcessor::processAudioPcmData(const QByteArray &pcmData)
             // Opus音频通常一帧就是一个RTP包，packetizer负责补RTP头、序号和时间戳。
             m_audioPacketizer->outgoing(messages, [](rtc::message_ptr) {});
 
+            // packetizer输出的是完整Opus RTP包，后续直接写入与MediaServer协商好的音频Track。
             for (const rtc::message_ptr &message : messages) {
                 MediaTransportMgr::GetInstance()->sendAudioRtp(QByteArray(
                     reinterpret_cast<const char *>(message->data()),
@@ -275,7 +277,7 @@ void MediaStreamProcessor::processAudioPcmData(const QByteArray &pcmData)
 
 void MediaStreamProcessor::startVideo()
 {
-    // 预留：视频帧编码和 RTP 封装后续在这里接入
+    // 初始化视频编码器和RTP打包器；采集帧到达后即可在processVideoFrame中完成编码、封装和发送。
     if(m_videoStarted) {
         return;
     }
