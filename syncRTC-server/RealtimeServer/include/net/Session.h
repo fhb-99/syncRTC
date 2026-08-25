@@ -30,6 +30,10 @@ public:
     void SetMeetingId(std::uint64_t meeting_id);
     std::uint64_t GetMeetingId() const;
 
+    // 一次 offer 协商对应一个内部 signal_id，后续 ICE candidate 沿用该标识返回原连接。
+    void SetMediaSignalId(std::uint64_t signal_id);
+    std::uint64_t GetMediaSignalId() const;
+
     // 读取并解析 Qt 客户端的 4 字节帧头，完整帧直接投递到 LogicSystem。
     bool HandleRead();
 
@@ -47,6 +51,8 @@ private:
     int m_user_id;
     // 未进入会议时保持为 0；离会/断线清理后也应重置为 0。
     std::uint64_t m_meeting_id;
+    // 最近一次媒体 offer 的内部关联标识，未协商时为 0。
+    std::uint64_t m_media_signal_id;
     // 半包会暂存在这里，直到凑齐一个完整帧。
     std::string m_receive_buffer;
     // 非阻塞 send 未发完的数据按顺序保留在队列中。

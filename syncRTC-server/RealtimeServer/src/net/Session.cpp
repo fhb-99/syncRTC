@@ -18,6 +18,7 @@ Session::Session(int fd)
     : m_fd(fd),
       m_user_id(0),
       m_meeting_id(0),
+      m_media_signal_id(0),
       m_send_offset(0)
 {
 }
@@ -45,6 +46,16 @@ void Session::SetMeetingId(std::uint64_t meeting_id)
 std::uint64_t Session::GetMeetingId() const
 {
     return m_meeting_id;
+}
+
+void Session::SetMediaSignalId(std::uint64_t signal_id)
+{
+    m_media_signal_id = signal_id;
+}
+
+std::uint64_t Session::GetMediaSignalId() const
+{
+    return m_media_signal_id;
 }
 
 bool Session::HandleRead()

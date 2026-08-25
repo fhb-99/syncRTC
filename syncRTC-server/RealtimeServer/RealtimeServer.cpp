@@ -6,6 +6,7 @@
 
 #include "config/ConfigMgr.h"
 #include "net/CServer.h"
+#include "service/LogicSystem.h"
 
 int main()
 {
@@ -31,6 +32,16 @@ int main()
             std::cerr << "RealtimeServer 配置错误：Port 必须在 1 到 65535 之间" << std::endl;
             return EXIT_FAILURE;
         }
+
+        const std::string media_socket_path =
+            ConfigMgr::Init()["MediaServer"]["InternalSocketPath"];
+        if (media_socket_path.empty()) {
+            std::cerr << "RealtimeServer 配置错误：缺少 MediaServer.InternalSocketPath" << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        // 先连通 MediaServer，客户端发起 offer 后才能立即交给 UDS 连接处理。
+        LogicSystem::GetInstance()->StartMediaSignalClient(media_socket_path);
 
         CServer server(static_cast<unsigned short>(port_value));
         server.Start();
