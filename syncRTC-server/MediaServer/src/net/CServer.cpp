@@ -1,16 +1,12 @@
 #include "net/CServer.h"
 
-#include "common/data.h"
 #include "net/Session.h"
-#include "service/LogicSystem.h"
 
 #include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
-
-#include <json/json.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -91,37 +87,10 @@ void CServer::Run()
         }
 
         auto session = std::make_shared<Session>(client_fd);
-        std::string message;
-        while (session->Receive(message)) {
-            HandleSignal(session, message);
+        // CServer 只负责 UDS 连接生命周期。完整信令帧由 Session 投递给
+        // LogicSystem 的工作线程，避免网络读取线程直接处理 SDP 和房间状态。
+        while (session->HandleRead()) {
         }
         ::close(client_fd);
-    }
-}
-
-void CServer::HandleSignal(const std::shared_ptr<Session>& session, const std::string& message)
-{
-    Json::Reader reader;
-    Json::Value root;
-    if (!reader.parse(message, root) || !root.isObject() ||
-        !root["signal_id"].isUInt64() || !root["meeting_id"].isUInt64() ||
-        !root["uid"].isInt() || !root["signal_type"].isString()) {
-        return;
-    }
-
-    MediaSignalRequest request;
-    request.signal_id = root["signal_id"].asUInt64();
-    request.meeting_id = root["meeting_id"].asUInt64();
-    request.uid = root["uid"].asInt();
-    request.signal_type = root["signal_type"].asString();
-    if (request.signal_type == "offer" && root["sdp"].isString()) {
-        request.sdp = root["sdp"].asString();
-        LogicSystem::GetInstance()->HandleOffer(session, request);
-        return;
-    }
-    if (request.signal_type == "candidate" && root["candidate"].isString() && root["mid"].isString()) {
-        request.candidate = root["candidate"].asString();
-        request.mid = root["mid"].asString();
-        LogicSystem::GetInstance()->HandleCandidate(session, request);
     }
 }

@@ -406,6 +406,10 @@ void LogicSystem::initHandlers()
         MediaCandidateHandler(session, id, message);
     };
 
+    maps[ID_MEDIA_RENEGOTIATION_ANSWER_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        MediaAnswerHandler(session, id, message);
+    };
+
     maps[kMediaSignalResponseEventId] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         MediaSignalResponseHandler(session, id, message);
     };
@@ -1807,6 +1811,53 @@ void LogicSystem::MediaOfferHandler(std::shared_ptr<Session> session, std::uint1
     need_reply = false;
 }
 
+void LogicSystem::MediaAnswerHandler(std::shared_ptr<Session> session,
+                                     std::uint16_t&,
+                                     std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    Json::Reader reader;
+    Json::Value root;
+    if (!reader.parse(message, root) || !root.isObject() ||
+        !root.isMember("meeting_id") || !root["type"].isString() || !root["sdp"].isString()) {
+        return;
+    }
+
+    std::uint64_t meeting_id = 0;
+    if (!ReadUInt64Value(root["meeting_id"], meeting_id) || meeting_id == 0 ||
+        root["type"].asString() != "answer" || root["sdp"].asString().empty()) {
+        return;
+    }
+
+    // Answer 只能由当前已登录、仍处于该会议中的客户端返回。
+    // uid 继续取 Session 中的可信身份，不接受客户端在 JSON 中自行指定。
+    const int uid = session->GetUserId();
+    if (uid <= 0 || session->GetMeetingId() != meeting_id ||
+        !RedisMgr::GetInstance()->SIsMember(RoomMembersKey(meeting_id), std::to_string(uid))) {
+        return;
+    }
+
+    const std::uint64_t signal_id = session->GetMediaSignalId();
+    const auto signal_it = m_media_signal_sessions.find(signal_id);
+    if (signal_id == 0 || signal_it == m_media_signal_sessions.end() ||
+        signal_it->second.lock() != session) {
+        return;
+    }
+
+    Json::Value media_request;
+    // 服务端主动 Offer 沿用初次媒体协商的 signal_id，因此客户端 Answer 也沿用该标识。
+    // MediaServer 收到后即可在对应会议和 uid 下找到原 PeerConnection。
+    media_request["signal_id"] = static_cast<Json::UInt64>(signal_id);
+    media_request["meeting_id"] = static_cast<Json::UInt64>(meeting_id);
+    media_request["uid"] = uid;
+    media_request["signal_type"] = "answer";
+    media_request["sdp"] = root["sdp"].asString();
+    SendMediaSignal(media_request.toStyledString());
+}
+
 void LogicSystem::MediaCandidateHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
 {
     if (!session) {
@@ -1909,6 +1960,14 @@ void LogicSystem::MediaSignalResponseHandler(std::shared_ptr<Session>, std::uint
     const std::string signal_type = root["signal_type"].asString();
     Json::Value value;
     value["error"] = ErrorCodes::SUCCESS;
+    if (signal_type == "offer" && root["sdp"].isString()) {
+        // 新成员带来新的消费 Track 后，MediaServer 主动生成 Offer。
+        // RealtimeServer 只根据 signal_id 找回客户端连接，并使用独立协议号推送。
+        value["type"] = "offer";
+        value["sdp"] = root["sdp"].asString();
+        client_session->Send(ID_MEDIA_RENEGOTIATION_OFFER, value.toStyledString());
+        return;
+    }
     if (signal_type == "answer" && root["sdp"].isString()) {
         // MediaServer 只给出 WebRTC 协商结果，客户端协议号仍由 RealtimeServer 统一决定。
         value["type"] = "answer";

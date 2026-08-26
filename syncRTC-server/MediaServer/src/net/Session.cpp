@@ -1,8 +1,11 @@
 #include "net/Session.h"
 
+#include "service/LogicSystem.h"
+
 #include <array>
 #include <cerrno>
 #include <limits>
+#include <utility>
 
 #include <sys/socket.h>
 
@@ -52,6 +55,22 @@ Session::Session(int fd)
 int Session::GetFd() const
 {
     return m_fd;
+}
+
+bool Session::HandleRead()
+{
+    std::string payload;
+    if (!Receive(payload)) {
+        return false;
+    }
+
+    auto message = std::make_shared<MediaSignalNode>();
+    // Session 只完成长度帧解包。把来源连接和原始 JSON 一起交给逻辑线程，
+    // 后续的 JSON 校验、SDP/candidate 处理都不会阻塞 CServer 的读取循环。
+    message->session = shared_from_this();
+    message->message = std::move(payload);
+    LogicSystem::GetInstance()->PostMsgToQue(std::move(message));
+    return true;
 }
 
 bool Session::Receive(std::string& payload)
