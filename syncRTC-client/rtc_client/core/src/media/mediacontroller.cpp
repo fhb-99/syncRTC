@@ -17,6 +17,8 @@ MediaController::MediaController(QObject *parent)
 {
     connect(m_mediaSession.get(), &MediaSession::localOfferReady,
             this, &MediaController::slotLocalOfferReady);
+    connect(m_mediaSession.get(), &MediaSession::localAnswerReady,
+            this, &MediaController::slotLocalAnswerReady);
     connect(m_mediaSession.get(), &MediaSession::localCandidateReady,
             this, &MediaController::slotLocalCandidateReady);
 }
@@ -34,6 +36,20 @@ bool MediaController::applyMediaAnswer(const QJsonObject &json)
 
     // MediaController 只解析业务字段，真正的 WebRTC 对象操作交给 MediaSession。
     m_mediaSession->setRemoteDescription(sdp, type);
+    return true;
+}
+
+bool MediaController::applyMediaOffer(const QJsonObject &json)
+{
+    const QString sdp = json.value("sdp").toString();
+    const QString type = json.value("type").toString();
+    if (sdp.isEmpty() || type != QStringLiteral("offer")) {
+        return false;
+    }
+
+    // 这份 Offer 由 MediaServer 在新成员加入并新增消费 Track 后主动生成。
+    // MediaSession 设置远端描述后会立即创建本地 Answer，并通过 localAnswerReady 返回控制层。
+    m_mediaSession->setRemoteOffer(sdp);
     return true;
 }
 
@@ -61,6 +77,19 @@ void MediaController::slotLocalOfferReady(const QString &meetingId, const QStrin
     // offer 属于媒体协商信令，仍然复用现有 RealtimeServer TCP 控制链路发送。
     TcpMgr::GetInstance()->signal_send_data(
         ID_MEDIA_OFFER_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
+}
+
+void MediaController::slotLocalAnswerReady(const QString &meetingId, const QString &sdp)
+{
+    QJsonObject request;
+    request["meeting_id"] = meetingId;
+    request["type"] = QStringLiteral("answer");
+    request["sdp"] = sdp;
+
+    // Answer 沿原 TCP 控制链路返回 RealtimeServer，再通过 UDS 交给发起 Offer 的 MediaServer。
+    TcpMgr::GetInstance()->signal_send_data(
+        ID_MEDIA_RENEGOTIATION_ANSWER_REQUEST,
+        QJsonDocument(request).toJson(QJsonDocument::Compact));
 }
 
 void MediaController::slotLocalCandidateReady(const QString &meetingId,

@@ -5,6 +5,8 @@
 #include <QString>
 
 #include <memory>
+#include <mutex>
+#include <vector>
 
 namespace rtc {
 class PeerConnection;
@@ -22,6 +24,7 @@ public:
     void startMediaSession(const QString &meetingId);
     void stopMediaSession();
     void setRemoteDescription(const QString &sdp, const QString &type);
+    void setRemoteOffer(const QString &sdp);
     void addRemoteCandidate(const QString &candidate, const QString &mid);
     std::shared_ptr<rtc::Track> videoTrack() const;
     std::shared_ptr<rtc::Track> audioTrack() const;
@@ -29,6 +32,7 @@ public:
 signals:
     // offer/candidate 仍走现有 RealtimeServer 控制链路，不由传输类直接发送。
     void localOfferReady(const QString &meetingId, const QString &sdp);
+    void localAnswerReady(const QString &meetingId, const QString &sdp);
     void localCandidateReady(const QString &meetingId, const QString &candidate,
                              const QString &mid);
 
@@ -37,6 +41,8 @@ private:
     std::shared_ptr<rtc::PeerConnection> m_peerConnection;
     std::shared_ptr<rtc::Track> m_videoTrack;
     std::shared_ptr<rtc::Track> m_audioTrack;
+    std::vector<std::shared_ptr<rtc::Track>> m_remoteTracks;
+    std::mutex m_remoteTracksMutex;
 };
 
 #endif // MEDIASESSION_H

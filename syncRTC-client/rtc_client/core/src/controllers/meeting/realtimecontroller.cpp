@@ -197,6 +197,20 @@ void RealtimeController::initHandlers()
             qWarning() << "Media candidate response invalid";
         }
     });
+
+    // 新成员发布音视频后，MediaServer 会主动发起一次协商，把新增消费 Track 告知客户端。
+    // RealtimeController 仍然只负责按协议号路由，SDP 设置和 Answer 生成交给 MediaController。
+    m_handlers.insert(ID_MEDIA_RENEGOTIATION_OFFER, [this](const QJsonObject &json) {
+        bool handled = false;
+        if (m_media) {
+            QMetaObject::invokeMethod(m_media, "applyMediaOffer",
+                                      Q_RETURN_ARG(bool, handled),
+                                      Q_ARG(QJsonObject, json));
+        }
+        if (!handled) {
+            qWarning() << "Media renegotiation offer invalid";
+        }
+    });
 }
 
 void RealtimeController::slot_message_recv(RequestID reqID, QJsonObject json)

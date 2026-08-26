@@ -30,6 +30,7 @@ public:
     Q_INVOKABLE void requestStopAll();
 
     Q_INVOKABLE bool applyMediaAnswer(const QJsonObject &json);
+    Q_INVOKABLE bool applyMediaOffer(const QJsonObject &json);
     Q_INVOKABLE bool applyMediaCandidate(const QJsonObject &json);
 
 signals:
@@ -39,6 +40,7 @@ signals:
 
 private:
     void slotLocalOfferReady(const QString &meetingId, const QString &sdp);
+    void slotLocalAnswerReady(const QString &meetingId, const QString &sdp);
     void slotLocalCandidateReady(const QString &meetingId, const QString &candidate,
                                  const QString &mid);
 
