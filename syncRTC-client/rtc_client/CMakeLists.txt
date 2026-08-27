@@ -117,6 +117,7 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/media/receive/audioreceivepipeline.h core/src/media/receive/audioreceivepipeline.cpp
         SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
         SOURCES core/src/media/receive/avsyncscheduler.h core/src/media/receive/avsyncscheduler.cpp
+        SOURCES core/src/media/render/remotevideorenderer.h core/src/media/render/remotevideorenderer.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -340,6 +341,20 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME contactscontroller_test COMMAND contactscontroller_test)
+
+    qt_add_executable(remotevideorenderer_test
+        core/tests/remotevideorenderer_test.cpp
+        core/src/media/render/remotevideorenderer.h
+        core/src/media/render/remotevideorenderer.cpp
+    )
+
+    target_link_libraries(remotevideorenderer_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Multimedia
+    )
+
+    add_test(NAME remotevideorenderer_test COMMAND remotevideorenderer_test)
 endif()
 
 include(GNUInstallDirs)

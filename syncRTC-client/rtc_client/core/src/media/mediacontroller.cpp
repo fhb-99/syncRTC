@@ -3,17 +3,21 @@
 #include "mediadevicecapture.h"
 #include "mediasession.h"
 #include "mediastreamprocessor.h"
+#include "receive/remotemediareceiver.h"
+#include "render/remotevideorenderer.h"
 #include "../network/mediatransportmgr.h"
 #include "../network/tcpmgr.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QVideoSink>
 
 MediaController::MediaController(QObject *parent)
     : QObject{parent}
     , m_deviceCapture(std::make_unique<MediaDeviceCapture>(this))
     , m_mediaSession(std::make_unique<MediaSession>(this))
     , m_streamProcessor(std::make_unique<MediaStreamProcessor>(this))
+    , m_videoRenderer(std::make_unique<RemoteVideoRenderer>(this))
 {
     connect(m_mediaSession.get(), &MediaSession::localOfferReady,
             this, &MediaController::slotLocalOfferReady);
@@ -21,9 +25,46 @@ MediaController::MediaController(QObject *parent)
             this, &MediaController::slotLocalAnswerReady);
     connect(m_mediaSession.get(), &MediaSession::localCandidateReady,
             this, &MediaController::slotLocalCandidateReady);
+    connect(m_mediaSession.get(), &MediaSession::remoteVideoEncodedFrameReady,
+            this, &MediaController::slotRemoteVideoEncodedFrameReady);
+    connect(m_mediaSession.get(), &MediaSession::remoteAudioEncodedFrameReady,
+            this, &MediaController::slotRemoteAudioEncodedFrameReady);
+    connect(m_deviceCapture.get(), &MediaDeviceCapture::videoFrameCaptured,
+            m_videoRenderer.get(), &RemoteVideoRenderer::renderLocalFrame);
+    connect(this, &MediaController::remoteVideoFrameReady,
+            m_videoRenderer.get(), &RemoteVideoRenderer::renderRemoteFrame);
+    connect(m_videoRenderer.get(), &RemoteVideoRenderer::localVideoAvailableChanged,
+            this, &MediaController::localVideoAvailableChanged);
 }
 
 MediaController::~MediaController() = default;
+
+bool MediaController::localVideoAvailable() const
+{
+    return m_videoRenderer->localVideoAvailable();
+}
+
+void MediaController::bindLocalVideoSink(QObject *sinkObject)
+{
+    m_videoRenderer->bindLocalVideoSink(qobject_cast<QVideoSink *>(sinkObject));
+}
+
+void MediaController::unbindLocalVideoSink(QObject *sinkObject)
+{
+    m_videoRenderer->unbindLocalVideoSink(qobject_cast<QVideoSink *>(sinkObject));
+}
+
+void MediaController::bindRemoteVideoSink(int publisherUid, QObject *sinkObject)
+{
+    m_videoRenderer->bindRemoteVideoSink(publisherUid,
+                                         qobject_cast<QVideoSink *>(sinkObject));
+}
+
+void MediaController::unbindRemoteVideoSink(int publisherUid, QObject *sinkObject)
+{
+    m_videoRenderer->unbindRemoteVideoSink(publisherUid,
+                                           qobject_cast<QVideoSink *>(sinkObject));
+}
 
 bool MediaController::applyMediaAnswer(const QJsonObject &json)
 {
@@ -106,6 +147,38 @@ void MediaController::slotLocalCandidateReady(const QString &meetingId,
         ID_MEDIA_CANDIDATE_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
 }
 
+RemoteMediaReceiver *MediaController::receiverFor(int publisherUid)
+{
+    auto receiver = m_remoteReceivers.find(publisherUid);
+    if (receiver == m_remoteReceivers.end()) {
+        // 一个远端参会者只创建一个接收对象，它同时管理这个人的视频和音频处理链路。
+        // 视频帧和音频帧可能先后到达，因此在第一帧到达时按发布者 UID 创建即可。
+        auto remoteReceiver = std::make_unique<RemoteMediaReceiver>(publisherUid);
+        connect(remoteReceiver.get(), &RemoteMediaReceiver::videoFrameReady,
+                this, &MediaController::remoteVideoFrameReady);
+        receiver = m_remoteReceivers.emplace(publisherUid, std::move(remoteReceiver)).first;
+    }
+    return receiver->second.get();
+}
+
+void MediaController::slotRemoteVideoEncodedFrameReady(int publisherUid,
+                                                       const QByteArray &frame,
+                                                       quint32 rtpTimestamp)
+{
+    // MediaSession 的 onFrame 回调来自 libdatachannel 收包线程。
+    // 该信号通过 Qt 自动队列连接回到 MediaController 所在线程，再按发布者找到接收链路。
+    receiverFor(publisherUid)->receiveVideoFrame(frame, rtpTimestamp);
+}
+
+void MediaController::slotRemoteAudioEncodedFrameReady(int publisherUid,
+                                                       const QByteArray &frame,
+                                                       quint32 rtpTimestamp)
+{
+    // 同一个发布者的音频和视频进入同一个 RemoteMediaReceiver，解码后再汇入其中的
+    // AvSyncScheduler。这样每位成员都只使用自己的音频时钟调度自己的视频画面。
+    receiverFor(publisherUid)->receiveAudioFrame(frame, rtpTimestamp);
+}
+
 void MediaController::requestOpenCamera(const QString &meetingId)
 {
     if (m_cameraEnabled) {
@@ -145,6 +218,7 @@ void MediaController::requestCloseCamera(const QString &meetingId)
 
     m_streamProcessor->stopVideo();
     m_deviceCapture->stopCamera();
+    m_videoRenderer->clearLocalFrame();
     MediaTransportMgr::GetInstance()->clearVideoTrack();
     m_cameraEnabled = false;
     emit cameraEnabledChanged();
@@ -194,6 +268,9 @@ void MediaController::requestStopAll()
     m_mediaSession->stopMediaSession();
     m_streamProcessor->stopAll();
     m_deviceCapture->stopAll();
+    m_videoRenderer->clearFrames();
+    // 离开会议后删除所有远端成员的接收上下文，避免下一次会议复用旧成员状态。
+    m_remoteReceivers.clear();
 
     const bool cameraChanged = m_cameraEnabled;
     const bool microphoneChanged = m_microphoneEnabled;

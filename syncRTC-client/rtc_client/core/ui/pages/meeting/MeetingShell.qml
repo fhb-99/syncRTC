@@ -522,6 +522,7 @@ Item {
         username: root.username
         members: root.activeMeetingMembers
         chatController: root.chatControllerRef
+        mediaController: root.mediaControllerRef
         onOpenMicrophoneRequested: {
             if (root.mediaControllerRef)
                 root.mediaControllerRef.requestOpenMicrophone()
