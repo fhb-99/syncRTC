@@ -112,9 +112,11 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/media/mediasession.h core/src/media/mediasession.cpp
         SOURCES core/src/media/mediadevicecapture.h core/src/media/mediadevicecapture.cpp
         SOURCES core/src/media/mediastreamprocessor.h core/src/media/mediastreamprocessor.cpp
+        SOURCES core/src/media/receive/remotemediareceiver.h core/src/media/receive/remotemediareceiver.cpp
         SOURCES core/src/media/receive/videoreceivepipeline.h core/src/media/receive/videoreceivepipeline.cpp
         SOURCES core/src/media/receive/audioreceivepipeline.h core/src/media/receive/audioreceivepipeline.cpp
         SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
+        SOURCES core/src/media/receive/avsyncscheduler.h core/src/media/receive/avsyncscheduler.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
