@@ -50,9 +50,39 @@ void MediaSession::startMediaSession(const QString &meetingId)
     });
 
     m_peerConnection->onTrack([this](std::shared_ptr<rtc::Track> track) {
+        const QString mid = QString::fromStdString(track->mid());
+        const int publisherUid = mid.mid(mid.lastIndexOf('-') + 1).toInt();
+
+        if (track->description().type() == "video") {
+            // libdatachannel 已在 PeerConnection 内部完成 DTLS/SRTP 解密，Track 收到的是 RTP 包。
+            // H264RtpDepacketizer 会去掉 RTP 头，并把同一个 RTP 时间戳下的单 NALU、STAP-A
+            // 或 FU-A 分片重新组合成一帧 H.264 Annex-B 编码数据，再触发 onFrame。
+            track->setMediaHandler(std::make_shared<rtc::H264RtpDepacketizer>());
+            track->onFrame([this, publisherUid](rtc::binary frame, rtc::FrameInfo frameInfo) {
+                // 回调运行在 libdatachannel 的收包线程。QByteArray 在这里复制编码帧，
+                // 后续接收模块可以通过 Qt 队列连接把它安全地交给解码线程。
+                emit remoteVideoEncodedFrameReady(
+                    publisherUid,
+                    QByteArray(reinterpret_cast<const char *>(frame.data()),
+                               static_cast<qsizetype>(frame.size())),
+                    frameInfo.timestamp);
+            });
+        } else {
+            // OpusRtpDepacketizer 去掉 RTP 头后，每次 onFrame 交出一个完整 Opus 编码帧。
+            // 此处不做解码、播放或音画同步，只把编码帧继续交给客户端接收链路。
+            track->setMediaHandler(std::make_shared<rtc::OpusRtpDepacketizer>());
+            track->onFrame([this, publisherUid](rtc::binary frame, rtc::FrameInfo frameInfo) {
+                emit remoteAudioEncodedFrameReady(
+                    publisherUid,
+                    QByteArray(reinterpret_cast<const char *>(frame.data()),
+                               static_cast<qsizetype>(frame.size())),
+                    frameInfo.timestamp);
+            });
+        }
+
+        // 服务端 Offer 中每个新增 m-line 都会创建一个接收 Track。配置完回调后仍需持有 Track，
+        // 否则对象释放会让该媒体线路停止接收，生成 Answer 时也可能将对应 m-line 标记为拒绝。
         std::lock_guard<std::mutex> lock(m_remoteTracksMutex);
-        // 服务端 Offer 中每个新增 m-line 都会创建一个接收 Track。当前阶段尚不解码和渲染，
-        // 但必须持有 Track，否则生成 Answer 时该 m-line 会因对象已释放而被标记为拒绝。
         m_remoteTracks.push_back(std::move(track));
     });
 

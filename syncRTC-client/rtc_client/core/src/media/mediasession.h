@@ -1,6 +1,7 @@
 #ifndef MEDIASESSION_H
 #define MEDIASESSION_H
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 
@@ -35,6 +36,12 @@ signals:
     void localAnswerReady(const QString &meetingId, const QString &sdp);
     void localCandidateReady(const QString &meetingId, const QString &candidate,
                              const QString &mid);
+    // 这里交出的仍是编码数据：视频为 H.264 Annex-B 帧，音频为单个 Opus 帧。
+    // 解码、音画同步和播放由后续 receive 目录中的接收链路负责。
+    void remoteVideoEncodedFrameReady(int publisherUid, const QByteArray &frame,
+                                      quint32 rtpTimestamp);
+    void remoteAudioEncodedFrameReady(int publisherUid, const QByteArray &frame,
+                                      quint32 rtpTimestamp);
 
 private:
     QString m_meetingId;
