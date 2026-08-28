@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -39,6 +40,9 @@ public:
     // timerfd 每秒调用一次；超时清理统一进入逻辑线程执行。
     void PostReconnectTimeoutCheck();
 
+    // 启动到 MediaServer 的单条 UDS 连接，offer、answer 与 candidate 均经此连接转发。
+    void StartMediaSignalClient(const std::string& socket_path);
+
 private:
     LogicSystem();
 
@@ -64,14 +68,29 @@ private:
     void SendMeetingMessageHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void GetMeetingGroupMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void GetMeetingPrivateMessagesHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    // 媒体信令处理先预留接口，后续再接入 MediaServer 转发链路。
+    void MediaOfferHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void MediaAnswerHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void MediaCandidateHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    void MediaSignalResponseHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void SessionDisconnectedHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
     void ReconnectTimeoutCheckHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+
+    bool SendMediaSignal(const std::string& message);
+    void ReadMediaSignalResponses();
+    void PostMediaSignalResponse(std::string message);
 
     bool m_stop;
     std::mutex m_mutex;
     std::condition_variable m_cond;
     std::thread work_thread;
     std::queue<std::shared_ptr<LogicNode>> m_msg_que;
+    // UDS 读线程收到 MediaServer 的 offer/answer/candidate 后，重新投递到逻辑线程查找客户端连接。
+    int m_media_fd = -1;
+    std::mutex m_media_send_mutex;
+    std::thread m_media_read_thread;
+    std::unordered_map<std::uint64_t, std::weak_ptr<Session>> m_media_signal_sessions;
+    std::uint64_t m_next_media_signal_id = 1;
     // LogicSystem 单线程访问，仅保存本进程中已进入会议的连接用于生命周期通知。
     std::unordered_map<std::uint64_t, std::vector<std::weak_ptr<Session>>> m_meeting_sessions;
     std::uint64_t m_next_message_sequence = 0;
