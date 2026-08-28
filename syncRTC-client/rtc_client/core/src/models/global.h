@@ -5,6 +5,20 @@
 #include <QString>
 #include <QDebug>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/frame.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
+#include <libavutil/pixfmt.h>
+#include <libavutil/samplefmt.h>
+#include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
+}
+
 enum RequestID {
     ID_GET_VARIFY_CODE = 1000,
     ID_REISTER_USER = 1001,
@@ -42,6 +56,13 @@ enum RequestID {
     ID_GET_MEETING_GROUP_MESSAGES_RESPONSE = 1035,
     ID_GET_MEETING_PRIVATE_MESSAGES_REQUEST = 1036,
     ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE = 1037,
+    // WebRTC 媒体协商信令：offer/answer 描述媒体参数，candidate 描述可连接的网络地址。
+    ID_MEDIA_OFFER_REQUEST = 1038,
+    ID_MEDIA_CANDIDATE_REQUEST = 1039,
+    ID_MEDIA_ANSWER_RESPONSE = 1040,
+    ID_MEDIA_CANDIDATE_RESPONSE = 1041,
+    ID_MEDIA_RENEGOTIATION_OFFER = 1042,
+    ID_MEDIA_RENEGOTIATION_ANSWER_REQUEST = 1043,
 };
 
 enum ErrorCodes

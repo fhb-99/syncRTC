@@ -111,6 +111,9 @@ void TcpMgr::initHandlers()
     m_handlers.insert(ID_MEETING_MEMBER_TIMEOUT_LEFT, forwardJsonResponse);
     m_handlers.insert(ID_GET_MEETING_GROUP_MESSAGES_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_GET_MEETING_PRIVATE_MESSAGES_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_MEDIA_ANSWER_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_MEDIA_CANDIDATE_RESPONSE, forwardJsonResponse);
+    m_handlers.insert(ID_MEDIA_RENEGOTIATION_OFFER, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

@@ -2,9 +2,48 @@ cmake_minimum_required(VERSION 3.16)
 
 project(rtc_client VERSION 0.1 LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg Network)
+option(SYNCRTC_ENABLE_FFMPEG "Enable FFmpeg codec dependencies" ON)
+
+if(WIN32)
+    set(SYNCRTC_LIBDATACHANNEL_ROOT "E:/deps/libdatachannel-0.24.5-mingw1120-static"
+        CACHE PATH "libdatachannel install root")
+    set(SYNCRTC_OPENSSL_ROOT "D:/Qt6/Tools/mingw1120_64/opt"
+        CACHE PATH "OpenSSL root used by the Qt MinGW toolchain")
+
+    if(EXISTS "${SYNCRTC_LIBDATACHANNEL_ROOT}/lib/cmake/LibDataChannel/LibDataChannelConfig.cmake")
+        list(APPEND CMAKE_PREFIX_PATH "${SYNCRTC_LIBDATACHANNEL_ROOT}")
+    endif()
+
+    if(EXISTS "${SYNCRTC_OPENSSL_ROOT}/include/openssl/ssl.h")
+        set(OPENSSL_ROOT_DIR "${SYNCRTC_OPENSSL_ROOT}" CACHE PATH "OpenSSL root" FORCE)
+    endif()
+endif()
+
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Svg Network Multimedia)
+
+if(SYNCRTC_ENABLE_FFMPEG)
+    find_package(FFmpeg REQUIRED COMPONENTS avcodec avformat avutil swresample swscale)
+    include_directories(${FFMPEG_INCLUDE_DIR})
+endif()
+
+if(NOT SYNCRTC_ENABLE_FFMPEG)
+    message(FATAL_ERROR "The media stack requires SYNCRTC_ENABLE_FFMPEG=ON.")
+endif()
+
+find_package(OpenSSL REQUIRED)
+find_package(LibDataChannel CONFIG QUIET)
+if(NOT LibDataChannel_FOUND)
+    find_package(libdatachannel CONFIG QUIET)
+endif()
+if(NOT TARGET LibDataChannel::LibDataChannel AND NOT TARGET datachannel)
+    message(FATAL_ERROR
+        "libdatachannel was not found. Install it with a CMake config package "
+        "or pass its install prefix with -DCMAKE_PREFIX_PATH=<path>.")
+endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -68,6 +107,17 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
         SOURCES core/src/controllers/meeting/chatcontroller.h core/src/controllers/meeting/chatcontroller.cpp
         SOURCES core/src/controllers/contacts/contactscontroller.h core/src/controllers/contacts/contactscontroller.cpp
+        SOURCES core/src/media/media_stack_probe.cpp
+        SOURCES core/src/media/mediacontroller.h core/src/media/mediacontroller.cpp
+        SOURCES core/src/media/mediasession.h core/src/media/mediasession.cpp
+        SOURCES core/src/media/mediadevicecapture.h core/src/media/mediadevicecapture.cpp
+        SOURCES core/src/media/mediastreamprocessor.h core/src/media/mediastreamprocessor.cpp
+        SOURCES core/src/media/receive/remotemediareceiver.h core/src/media/receive/remotemediareceiver.cpp
+        SOURCES core/src/media/receive/videoreceivepipeline.h core/src/media/receive/videoreceivepipeline.cpp
+        SOURCES core/src/media/receive/audioreceivepipeline.h core/src/media/receive/audioreceivepipeline.cpp
+        SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
+        SOURCES core/src/media/receive/avsyncscheduler.h core/src/media/receive/avsyncscheduler.cpp
+        SOURCES core/src/media/render/remotevideorenderer.h core/src/media/render/remotevideorenderer.cpp
 )
 
 add_custom_command(TARGET apprtc_client POST_BUILD
@@ -94,7 +144,18 @@ target_link_libraries(apprtc_client
         Qt6::QuickControls2
         Qt6::Svg
         Qt6::Network
+        Qt6::Multimedia
 )
+
+if(SYNCRTC_ENABLE_FFMPEG)
+    target_link_libraries(apprtc_client PRIVATE FFmpeg::FFmpeg)
+endif()
+
+if(TARGET LibDataChannel::LibDataChannel)
+    target_link_libraries(apprtc_client PRIVATE LibDataChannel::LibDataChannel)
+else()
+    target_link_libraries(apprtc_client PRIVATE datachannel)
+endif()
 
 if(WIN32)
     target_link_libraries(apprtc_client PRIVATE Advapi32)
@@ -280,6 +341,20 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME contactscontroller_test COMMAND contactscontroller_test)
+
+    qt_add_executable(remotevideorenderer_test
+        core/tests/remotevideorenderer_test.cpp
+        core/src/media/render/remotevideorenderer.h
+        core/src/media/render/remotevideorenderer.cpp
+    )
+
+    target_link_libraries(remotevideorenderer_test
+        PRIVATE
+            Qt6::Test
+            Qt6::Multimedia
+    )
+
+    add_test(NAME remotevideorenderer_test COMMAND remotevideorenderer_test)
 endif()
 
 include(GNUInstallDirs)

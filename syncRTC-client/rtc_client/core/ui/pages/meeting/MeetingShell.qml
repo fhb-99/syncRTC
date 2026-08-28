@@ -22,6 +22,7 @@ Item {
     property string activeMeetingRole: "participant"
     property var activeMeetingMembers: []
     property var chatControllerRef: chatController
+    property var mediaControllerRef: mediaController
 
     function avatarText() {
         var name = username.trim()
@@ -66,6 +67,8 @@ Item {
     }
 
     function leaveMeeting() {
+        if (mediaControllerRef)
+            mediaControllerRef.requestStopAll()
         chatControllerRef.setActiveMeetingId("")
         inMeeting = false
         activeMeetingId = ""
@@ -93,8 +96,11 @@ Item {
     }
 
     function applyMeetingEnded(meetingId) {
-        if (meetingId === undefined || String(meetingId) === root.activeMeetingId)
+        if (meetingId === undefined || String(meetingId) === root.activeMeetingId) {
+            if (mediaControllerRef)
+                mediaControllerRef.requestStopAll()
             root.activeMeetingStatus = "ended"
+        }
     }
 
     Connections {
@@ -170,6 +176,14 @@ Item {
         function onPrivateHistoryLoadFailed(peerUserId, error) {
             void(peerUserId)
             root.showToast("加载私聊历史失败（错误码：" + error + "）")
+        }
+    }
+
+    Connections {
+        target: root.mediaControllerRef
+
+        function onMediaError(message) {
+            root.showToast(message)
         }
     }
 
@@ -508,6 +522,23 @@ Item {
         username: root.username
         members: root.activeMeetingMembers
         chatController: root.chatControllerRef
+        mediaController: root.mediaControllerRef
+        onOpenMicrophoneRequested: {
+            if (root.mediaControllerRef)
+                root.mediaControllerRef.requestOpenMicrophone()
+        }
+        onCloseMicrophoneRequested: {
+            if (root.mediaControllerRef)
+                root.mediaControllerRef.requestCloseMicrophone()
+        }
+        onOpenCameraRequested: function(meetingId) {
+            if (root.mediaControllerRef)
+                root.mediaControllerRef.requestOpenCamera(meetingId)
+        }
+        onCloseCameraRequested: function(meetingId) {
+            if (root.mediaControllerRef)
+                root.mediaControllerRef.requestCloseCamera(meetingId)
+        }
         onStartMeetingRequested: function(meetingId) {
             root.requestStartMeeting(meetingId)
         }

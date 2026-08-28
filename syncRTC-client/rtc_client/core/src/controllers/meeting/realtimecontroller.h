@@ -23,6 +23,7 @@ public:
     // 供 main.cpp 注入 QML；所有权仍属于 RealtimeController。
     MeetingController *meetingController() const { return m_meeting.get(); }
     ChatController *chatController() const { return m_chat.get(); }
+    void setMediaController(QObject *mediaController);
 
 signals:
     // 个人资料处理完成后通知 QML 切换到会议主界面
@@ -42,6 +43,7 @@ private:
     std::unique_ptr<ProfileController> m_profile;
     std::unique_ptr<MeetingController> m_meeting;
     std::unique_ptr<ChatController> m_chat;
+    QObject *m_media = nullptr;
     // 后续联系人、会议、AI 等控制器只需在此注册各自 RequestID 的处理器。
     QMap<RequestID, MessageHandler> m_handlers;
 };

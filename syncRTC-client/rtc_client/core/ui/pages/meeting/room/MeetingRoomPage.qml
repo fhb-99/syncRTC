@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtMultimedia
 
 Item {
     id: root
@@ -12,6 +13,7 @@ Item {
     property string username: ""
     property var members: []
     property var chatController: null
+    property var mediaController: null
     property bool microphoneMuted: false
     property bool cameraEnabled: true
     property bool sharingEnabled: false
@@ -35,10 +37,16 @@ Item {
     readonly property bool isScheduled: status === "scheduled"
     readonly property bool isInProgress: status === "in_progress"
     readonly property bool isEnded: status === "ended"
+    readonly property bool localVideoAvailable: mediaController
+                                                ? mediaController.localVideoAvailable : false
 
     signal startMeetingRequested(string meetingId)
     signal endMeetingRequested(string meetingId)
     signal leaveRequested()
+    signal openMicrophoneRequested()
+    signal closeMicrophoneRequested()
+    signal openCameraRequested(string meetingId)
+    signal closeCameraRequested(string meetingId)
 
     function avatarText(name) {
         var value = name.trim()
@@ -87,6 +95,29 @@ Item {
             return
 
         root.endMeetingRequested(root.meetingId)
+    }
+
+    function setMicrophoneMuted(muted) {
+        if (root.microphoneMuted === muted)
+            return
+
+        root.microphoneMuted = muted
+        // QML 只发出用户意图，真实设备开关由 MediaController 接收信号后处理。
+        if (muted)
+            root.closeMicrophoneRequested()
+        else
+            root.openMicrophoneRequested()
+    }
+
+    function setCameraEnabled(enabled) {
+        if (root.cameraEnabled === enabled)
+            return
+
+        root.cameraEnabled = enabled
+        if (enabled)
+            root.openCameraRequested(root.meetingId)
+        else
+            root.closeCameraRequested(root.meetingId)
     }
 
     function currentChatPeerId() {
@@ -520,40 +551,154 @@ Item {
                 clip: true
                 objectName: "meetingStage"
 
-                Rectangle {
-                    width: 84
-                    height: 84
-                    radius: 42
-                    anchors.centerIn: parent
-                    color: "#2563eb"
+                GridView {
+                    id: participantGrid
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: root.avatarText(root.username)
-                        color: "#ffffff"
-                        font.pixelSize: 28
-                        font.bold: true
+                    objectName: "meetingParticipantGrid"
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    model: memberModel
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    // 1 人独占画面，2 人左右排列，3～4 人使用两列，更多成员使用三列。
+                    // 最多同时显示三行；超过九人后由 GridView 自己提供纵向滚动。
+                    readonly property int layoutColumnCount:
+                        memberModel.count <= 1 ? 1 : (memberModel.count <= 4 ? 2 : 3)
+                    readonly property int visibleRowCount:
+                        Math.max(1, Math.min(3, Math.ceil(
+                                                memberModel.count / layoutColumnCount)))
+                    cellWidth: width / layoutColumnCount
+                    cellHeight: height / visibleRowCount
+                    interactive: contentHeight > height
+
+                    ScrollBar.vertical: ScrollBar { }
+
+                    delegate: Item {
+                        id: memberTile
+
+                        required property string userId
+                        required property string name
+                        required property color color
+                        required property bool muted
+                        required property string roomState
+                        required property bool isSelf
+
+                        width: participantGrid.cellWidth
+                        height: participantGrid.cellHeight
+
+                        // 本地成员看 MediaController 报告的采集状态；远端成员以
+                        // QVideoSink 是否已经收到有效尺寸的视频帧作为画面可用标志。
+                        readonly property bool videoAvailable:
+                            isSelf
+                            ? root.cameraEnabled && root.localVideoAvailable
+                            : memberVideoOutput.videoSink.videoSize.width > 0
+                              && memberVideoOutput.videoSink.videoSize.height > 0
+
+                        Component.onCompleted: {
+                            if (!root.mediaController)
+                                return
+
+                            // 每个成员格子只绑定自己对应的 sink：本地采集帧进入本地格子，
+                            // 远端同步后的视频帧按 user_id 进入对应的远端格子。
+                            if (isSelf)
+                                root.mediaController.bindLocalVideoSink(memberVideoOutput.videoSink)
+                            else
+                                root.mediaController.bindRemoteVideoSink(
+                                            Number(userId), memberVideoOutput.videoSink)
+                        }
+                        Component.onDestruction: {
+                            if (!root.mediaController)
+                                return
+
+                            if (isSelf)
+                                root.mediaController.unbindLocalVideoSink(memberVideoOutput.videoSink)
+                            else
+                                root.mediaController.unbindRemoteVideoSink(
+                                            Number(userId), memberVideoOutput.videoSink)
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            radius: 14
+                            color: memberTile.roomState === "reconnecting"
+                                   ? "#64748b" : memberTile.color
+                            clip: true
+
+                            VideoOutput {
+                                id: memberVideoOutput
+
+                                objectName: memberTile.isSelf
+                                            ? "localVideoOutput"
+                                            : "remoteVideoOutput_" + memberTile.userId
+                                anchors.fill: parent
+                                visible: memberTile.videoAvailable && !root.isEnded
+                                fillMode: VideoOutput.PreserveAspectCrop
+                            }
+
+                            Rectangle {
+                                width: Math.min(84, Math.max(54, parent.height * 0.25))
+                                height: width
+                                radius: width / 2
+                                anchors.centerIn: parent
+                                color: memberTile.isSelf ? "#2563eb" : "#94a3b8"
+                                visible: !memberTile.videoAvailable || root.isEnded
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.avatarText(memberTile.name)
+                                    color: "#ffffff"
+                                    font.pixelSize: Math.min(28, parent.width * 0.36)
+                                    font.bold: true
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.margins: 12
+                                height: 28
+                                radius: 14
+                                color: "#101a2d"
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 12
+                                    anchors.right: mutedLabel.visible ? mutedLabel.left : parent.right
+                                    anchors.rightMargin: 8
+                                    text: memberTile.roomState === "reconnecting"
+                                          ? memberTile.name + " · 重连中"
+                                          : memberTile.name
+                                    color: "#ffffff"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    id: mutedLabel
+
+                                    visible: memberTile.muted
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    text: "静音"
+                                    color: "#fca5a5"
+                                    font.pixelSize: 11
+                                }
+                            }
+                        }
                     }
                 }
 
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: 16
-                    anchors.bottomMargin: 16
-                    width: hostLabel.implicitWidth + 28
-                    height: 30
-                    radius: 15
-                    color: "#101a2d"
-
-                    Text {
-                        id: hostLabel
-
-                        anchors.centerIn: parent
-                        text: root.username.length > 0 ? root.username : "我"
-                        color: "#f8fafc"
-                        font.pixelSize: 13
-                    }
+                Text {
+                    anchors.centerIn: parent
+                    visible: memberModel.count === 0
+                    text: "等待成员实时数据同步"
+                    color: "#94a3b8"
+                    font.pixelSize: 14
                 }
 
                 Rectangle {
@@ -638,94 +783,6 @@ Item {
                     }
                 }
 
-            }
-
-            Row {
-                // 底部成员缩略条持续保留，成员按钮只负责打开右侧成员面板。
-                visible: true
-                Layout.fillWidth: true
-                Layout.preferredHeight: 112
-                spacing: 14
-
-                // 成员缩略区域只绑定 memberModel；模型为空时显示同步等待状态。
-                Rectangle {
-                    visible: memberModel.count === 0
-                    width: parent.width
-                    height: parent.height
-                    radius: 14
-                    color: "#172437"
-                    border.color: "#304158"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "等待成员实时数据同步"
-                        color: "#94a3b8"
-                        font.pixelSize: 14
-                    }
-                }
-
-                Repeater {
-                    model: memberModel
-
-                    delegate: Rectangle {
-                        required property string name
-                        required property color color
-                        required property bool muted
-                        required property string roomState
-
-                        width: Math.max(130, (parent.width - 42) / 4)
-                        height: parent.height
-                        radius: 14
-                        color: roomState === "reconnecting" ? "#64748b" : color
-
-                        Rectangle {
-                            width: 54
-                            height: 54
-                            radius: 27
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.top: parent.top
-                            anchors.topMargin: 16
-                            color: "#94a3b8"
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: root.avatarText(name)
-                                color: "#ffffff"
-                                font.pixelSize: 19
-                                font.bold: true
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            anchors.margins: 12
-                            height: 24
-                            radius: 12
-                            color: "#101a2d"
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.left: parent.left
-                                anchors.leftMargin: 10
-                                text: roomState === "reconnecting" ? name + " · 重连中" : name
-                                color: "#ffffff"
-                                font.pixelSize: 12
-                            }
-
-                            Text {
-                                visible: muted
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.right: parent.right
-                                anchors.rightMargin: 10
-                                text: "静音"
-                                color: "#fca5a5"
-                                font.pixelSize: 11
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -1551,7 +1608,7 @@ Item {
             label: root.microphoneMuted ? "取消静音" : "静音"
             iconText: root.microphoneMuted ? "◌" : "●"
             selected: root.microphoneMuted
-            onTriggered: root.microphoneMuted = !root.microphoneMuted
+            onTriggered: root.setMicrophoneMuted(!root.microphoneMuted)
         }
 
         ControlButton {
@@ -1559,7 +1616,7 @@ Item {
             label: root.cameraEnabled ? "视频" : "开视频"
             iconText: root.cameraEnabled ? "▣" : "□"
             selected: root.cameraEnabled
-            onTriggered: root.cameraEnabled = !root.cameraEnabled
+            onTriggered: root.setCameraEnabled(!root.cameraEnabled)
         }
 
         ControlButton {
