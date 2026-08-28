@@ -499,7 +499,7 @@ LogicSystem::LogicSystem()
         return true;
     });
 
-    RegisterGet("/get_contacts", [](std::shared_ptr<HttpConnection> connection) {
+    RegisterPost("/get_contacts", [](std::shared_ptr<HttpConnection> connection) {
         auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 
 		connection->_response.set(http::field::content_type, "text/json");
@@ -577,7 +577,7 @@ LogicSystem::LogicSystem()
     });
 
 
-    RegisterGet("/search_contacts", [](std::shared_ptr<HttpConnection> connection) {
+    RegisterPost("/search_contacts", [](std::shared_ptr<HttpConnection> connection) {
         auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "receive body is " << body_str << std::endl;
 		connection->_response.set(http::field::content_type, "text/json");
@@ -593,6 +593,19 @@ LogicSystem::LogicSystem()
 			return true;
 		}
 
+        const std::string session_token = src_root["session_token"].asString();
+        const std::string device_id = src_root["device_id"].asString();
+        int uid = 0;
+        if (!LogicSystem::ValidateSession(session_token, device_id, uid)) {
+            root["error"] = RedisMgr::GetInstance()->IsConnected()
+                                ? ErrorCodes::ERROR_SESSION_INVALID
+                                : ErrorCodes::ERROR_REDIS;
+            std::string jsonstr = root.toStyledString();
+            beast::ostream(connection->_response.body()) << jsonstr;
+            return true;
+        }
+
+        // 当前搜索接口按邮箱精确查询；登录态只用于确认请求来自已认证用户。
         std::string email = src_root["keyword"].asString();
         if (email.empty()) {
             root["error"] = ErrorCodes::ERROR_JSON;
