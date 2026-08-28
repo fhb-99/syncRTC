@@ -8,6 +8,7 @@
 #include <QtTest>
 
 #include "../src/controllers/auth/LoginController.h"
+#include "../src/models/clientsession.h"
 #include "../src/models/sessioncredentialstore.h"
 #include "../src/network/httpmgr.h"
 
@@ -182,7 +183,8 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         controller.setDeviceID(QStringLiteral("device-id"));
         QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
                          &controller, &LoginController::slot_login_mod_finish);
@@ -203,6 +205,7 @@ private slots:
         QTRY_VERIFY(store.load(&account, &sessionToken));
         QCOMPARE(account, QStringLiteral("alice@example.com"));
         QCOMPARE(sessionToken, QStringLiteral("saved-session-token"));
+        QCOMPARE(clientSession.getSessionToken(), QStringLiteral("saved-session-token"));
     }
 
     void rememberedSessionLoginSendsNoPasswordAndRefreshesSession()
@@ -229,7 +232,8 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         controller.setDeviceID(QStringLiteral("device-id"));
         QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
                          &controller, &LoginController::slot_login_mod_finish);
@@ -247,6 +251,7 @@ private slots:
         QString sessionToken;
         QTRY_VERIFY(store.load(&account, &sessionToken));
         QCOMPARE(sessionToken, QStringLiteral("refreshed-session-token"));
+        QCOMPARE(clientSession.getSessionToken(), QStringLiteral("refreshed-session-token"));
     }
 
     void passwordLoginWithoutRememberingClearsExistingSession()
@@ -273,7 +278,8 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         controller.setDeviceID(QStringLiteral("device-id"));
         QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
                          &controller, &LoginController::slot_login_mod_finish);
@@ -308,7 +314,8 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         controller.setDeviceID(QStringLiteral("device-id"));
         QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
                          &controller, &LoginController::slot_login_mod_finish);
@@ -336,7 +343,8 @@ private slots:
         QVERIFY(store.save(QStringLiteral("alice@example.com"),
                            QStringLiteral("stored-session-token")));
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         QVERIFY(controller.hasRememberedSession());
 
         controller.ForgetRememberedSession();
@@ -367,7 +375,8 @@ private slots:
         const GateServerUrlRestore restoreUrl;
         GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
 
-        LoginController controller(nullptr, targetName);
+        ClientSession clientSession;
+        LoginController controller(&clientSession, nullptr, targetName);
         controller.setDeviceID(QStringLiteral("device-id"));
         QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
                          &controller, &LoginController::slot_login_mod_finish);

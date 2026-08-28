@@ -1,10 +1,10 @@
 #include "AuthController.h"
 
-AuthController::AuthController(QObject *parent)
+AuthController::AuthController(ClientSession *clientSession, QObject *parent)
     : QObject(parent)
 {
     m_register = std::make_unique<RegisterController>();
-    m_login = std::make_unique<LoginController>();
+    m_login = std::make_unique<LoginController>(clientSession);
     m_reset = std::make_unique<PasswordResetController>();
 
     connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_register_mod_finish,

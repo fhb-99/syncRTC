@@ -185,6 +185,11 @@ Item {
         return 0
     }
 
+    onCurrentSectionChanged: {
+        if (currentSection === "contacts")
+            contactsPage.contactsPageEntered()
+    }
+
     // 以下条目为当前静态展示数据，后续应由真实会议 API 与信令服务替换。
     ListModel {
         id: meetingModel
@@ -427,6 +432,8 @@ Item {
                 }
 
                 ContactsPage {
+                    id: contactsPage
+
                     onDemonstrationAction: function(message) {
                         root.showToast(message)
                     }

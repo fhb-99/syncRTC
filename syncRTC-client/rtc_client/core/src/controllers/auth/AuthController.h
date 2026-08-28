@@ -9,6 +9,8 @@
 #include "PasswordResetController.h"
 #include "RegisterController.h"
 
+class ClientSession;
+
 class AuthController : public QObject
 {
     Q_OBJECT
@@ -17,7 +19,7 @@ class AuthController : public QObject
     Q_PROPERTY(PasswordResetController* passwordResetController READ GetPasswordResetControll CONSTANT)
 
 public:
-    explicit AuthController(QObject *parent = nullptr);
+    explicit AuthController(ClientSession *clientSession, QObject *parent = nullptr);
 
     ~AuthController() = default;
 
