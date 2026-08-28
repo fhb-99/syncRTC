@@ -111,8 +111,27 @@ void ContactsController::initHttpHandlers()
             return;
         }
 
-        // 预留搜索结果处理入口：后续服务端返回 contacts 数组后，在这里转换为 QML 可展示列表。
-        m_searchResults.clear();
+        const int uid = json.value("uid").toInt();
+        const QString username = json.value("username").toString().trimmed();
+        const QString email = json.value("email").toString().trimmed();
+        if (uid <= 0 || username.isEmpty() || email.isEmpty()) {
+            m_contactsError = QStringLiteral("联系人搜索结果格式异常");
+            emit contactsErrorChanged();
+            emit contactsOperationFailed(RequestID::ID_SEARCH_CONTACTS, m_contactsError);
+            return;
+        }
+
+        QVariantMap item;
+        item["uid"] = uid;
+        item["username"] = username;
+        item["email"] = email;
+        item["name"] = username;
+
+        m_searchResults = QVariantList{item};
+        m_contactsError.clear();
+        m_contactsMessage = QStringLiteral("已找到联系人");
+        emit contactsErrorChanged();
+        emit contactsMessageChanged();
         emit searchResultsChanged();
         emit contactsSearchFinished(m_searchResults);
     });
@@ -126,11 +145,14 @@ void ContactsController::initHttpHandlers()
             return;
         }
 
-        // 单向添加：这里只通知 QML 操作完成，列表刷新由后续请求或页面刷新触发。
         const int uid = json.value("uid").toInt(json.value("contact_uid").toInt());
+        m_searchResults.clear();
         m_contactsMessage = QStringLiteral("联系人添加成功");
+        emit searchResultsChanged();
         emit contactsMessageChanged();
         emit contactAddFinished(uid);
+        // 添加成功后立即重新查询，让页面展示服务端保存后的联系人关系。
+        requestContacts();
     });
 
     m_handlers.insert(RequestID::ID_DELETE_CONTACT, [this](const QJsonObject &json) {
@@ -142,11 +164,12 @@ void ContactsController::initHttpHandlers()
             return;
         }
 
-        // 单向删除：这里只通知 QML 操作完成，是否移除本地列表等 UI 策略后续再接。
         const int uid = json.value("uid").toInt(json.value("contact_uid").toInt());
         m_contactsMessage = QStringLiteral("联系人删除成功");
         emit contactsMessageChanged();
         emit contactDeleteFinished(uid);
+        // 删除成功后重新查询，避免本地列表继续保留已删除联系人。
+        requestContacts();
     });
 }
 
@@ -196,16 +219,33 @@ void ContactsController::searchContacts(const QString &keyword)
         return;
     }
 
-    QJsonObject json;
-    json["keyword"] = keyword.trimmed();
-    if (json["keyword"].toString().isEmpty()) {
+    if (!m_clientSession || m_clientSession->getSessionToken().isEmpty()
+        || m_clientSession->getDeviceId().isEmpty()) {
+        m_contactsError = QStringLiteral("登录状态无效，请重新登录");
+        emit contactsErrorChanged();
+        emit contactsOperationFailed(RequestID::ID_SEARCH_CONTACTS, m_contactsError);
+        return;
+    }
+
+    const QString trimmedKeyword = keyword.trimmed();
+    if (trimmedKeyword.isEmpty()) {
         m_contactsError = QStringLiteral("搜索关键词不能为空");
         emit contactsErrorChanged();
         emit contactsOperationFailed(RequestID::ID_SEARCH_CONTACTS, m_contactsError);
         return;
     }
 
-    // 搜索联系人请求入口，具体返回数据在 ID_SEARCH_CONTACTS handler 中处理。
+    m_contactsError.clear();
+    m_contactsMessage.clear();
+    emit contactsErrorChanged();
+    emit contactsMessageChanged();
+
+    QJsonObject json;
+    json["keyword"] = trimmedKeyword;
+    json["session_token"] = m_clientSession->getSessionToken();
+    json["device_id"] = m_clientSession->getDeviceId();
+
+    // 搜索联系人也携带当前登录态，服务端据此拒绝未认证请求。
     emit signal_contacts_http_request(
         QUrl(GateServer_URL + "/search_contacts"),
         json,

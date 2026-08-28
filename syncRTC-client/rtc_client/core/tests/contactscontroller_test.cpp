@@ -101,8 +101,10 @@ private slots:
         QList<QVariant> arguments = requestSpy.takeFirst();
         QCOMPARE(arguments.at(0).toUrl().path(), QStringLiteral("/search_contacts"));
         QCOMPARE(arguments.at(1).toJsonObject().value("keyword").toString(), QStringLiteral("bob"));
-        QVERIFY(!arguments.at(1).toJsonObject().contains("session_token"));
-        QVERIFY(!arguments.at(1).toJsonObject().contains("device_id"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("session_token").toString(),
+                 QStringLiteral("session-token"));
+        QCOMPARE(arguments.at(1).toJsonObject().value("device_id").toString(),
+                 QStringLiteral("device-id"));
         QCOMPARE(arguments.at(2).value<RequestID>(), RequestID::ID_SEARCH_CONTACTS);
 
         arguments = requestSpy.takeFirst();
@@ -174,6 +176,8 @@ private slots:
         QJsonObject success;
         success["error"] = ErrorCodes::SUCCESS;
         success["uid"] = 7;
+        success["username"] = QStringLiteral("bob");
+        success["email"] = QStringLiteral("bob@example.com");
 
         controller.slot_contacts_mod_finish(
             RequestID::ID_SEARCH_CONTACTS,
