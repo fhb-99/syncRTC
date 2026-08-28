@@ -77,12 +77,13 @@ public:
 
     std::shared_ptr<sw::redis::Redis> getConnection() {
         std::unique_lock<std::mutex> m_lock(m_mutex);
+        // 启动阶段一个连接也未创建成功时，直接返回让上层报错；
+        // 已建连的连接池暂时借空时仍等待归还，避免并发请求误判 Redis 不可用。
         m_cond.wait(m_lock, [this](){
-            if(m_stop) return true;
-            return !m_buffer.empty();
+            return m_stop || create_size == 0 || !m_buffer.empty();
         });
 
-        if(m_stop) return nullptr;
+        if(m_stop || create_size == 0) return nullptr;
 
         auto con = m_buffer.front();
         m_buffer.pop();
