@@ -55,10 +55,10 @@ Item {
 
                 Layout.preferredWidth: 118
                 Layout.preferredHeight: 42
-                text: "添加联系人"
+                text: "搜索联系人"
                 font.pixelSize: 14
                 font.bold: true
-                onClicked: root.demonstrationAction("联系人功能仅为界面演示，尚未接入服务")
+                onClicked: contactsController.searchContacts(contactSearchInput.text)
 
                 background: Rectangle {
                     radius: 9
@@ -80,18 +80,82 @@ Item {
 
             Layout.fillWidth: true
             Layout.preferredHeight: 50
-            placeholderText: "搜索联系人（当前仅为界面展示，不执行筛选）"
+            placeholderText: "输入邮箱搜索联系人"
             font.pixelSize: 15
             verticalAlignment: TextInput.AlignVCenter
             leftPadding: 16
             rightPadding: 16
             topPadding: 0
             bottomPadding: 0
+            onAccepted: contactsController.searchContacts(text)
 
             background: Rectangle {
                 radius: 9
                 color: "#ffffff"
                 border.color: contactSearchInput.activeFocus ? "#2563eb" : "#dbe3ef"
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: contactsController.contactsError.length > 0
+                     || contactsController.contactsMessage.length > 0
+            text: contactsController.contactsError.length > 0
+                  ? contactsController.contactsError
+                  : contactsController.contactsMessage
+            color: contactsController.contactsError.length > 0 ? "#b91c1c" : "#166534"
+            font.pixelSize: 13
+            wrapMode: Text.WordWrap
+        }
+
+        Rectangle {
+            id: searchResultCard
+
+            property var resultData: contactsController.searchResults.length > 0
+                                     ? contactsController.searchResults[0]
+                                     : ({})
+
+            visible: contactsController.searchResults.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? 72 : 0
+            radius: 9
+            color: "#eff6ff"
+            border.color: "#bfdbfe"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                spacing: 14
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: searchResultCard.resultData.name || ""
+                        color: "#0f172a"
+                        font.pixelSize: 15
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: searchResultCard.resultData.email || ""
+                        color: "#64748b"
+                        font.pixelSize: 13
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Button {
+                    Layout.preferredWidth: 72
+                    Layout.preferredHeight: 36
+                    text: "添加"
+                    onClicked: contactsController.addContact(Number(searchResultCard.resultData.uid || 0))
+                }
             }
         }
 
@@ -158,6 +222,22 @@ Item {
                     }
                 }
             }
+
+            BusyIndicator {
+                anchors.centerIn: parent
+                visible: contactsController.contactsLoading
+                running: visible
+                z: 2
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: !contactsController.contactsLoading && contactsList.count === 0
+                text: "暂无联系人，可通过邮箱搜索并添加"
+                color: "#94a3b8"
+                font.pixelSize: 14
+                z: 2
+            }
         }
     }
 
@@ -169,6 +249,7 @@ Item {
 
             required property var modelData
             property var contactData: contactCardRoot.modelData || ({})
+            property int uid: Number(contactCardRoot.contactData.uid || 0)
             property string name: contactCardRoot.contactData.name || ""
             property string email: contactCardRoot.contactData.email || ""
             property string status: contactCardRoot.contactData.status || "离线"
@@ -177,7 +258,7 @@ Item {
             width: ListView.view.width
             height: 78
             radius: 9
-            color: contactMouseArea.containsMouse ? "#f4f8ff" : "#f8fafc"
+            color: "#f8fafc"
             border.color: "#dbe3ef"
 
             RowLayout {
@@ -247,15 +328,30 @@ Item {
                         horizontalAlignment: Text.AlignLeft
                     }
                 }
-            }
 
-            MouseArea {
-                id: contactMouseArea
+                Button {
+                    id: deleteContactButton
 
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.demonstrationAction("联系人功能仅为界面演示，尚未接入服务")
+                    Layout.preferredWidth: 64
+                    Layout.preferredHeight: 34
+                    text: "删除"
+                    onClicked: contactsController.deleteContact(contactCardRoot.uid)
+
+                    background: Rectangle {
+                        radius: 7
+                        color: deleteContactButton.down ? "#fee2e2"
+                                                        : deleteContactButton.hovered ? "#fef2f2" : "transparent"
+                        border.color: "#fecaca"
+                    }
+
+                    contentItem: Text {
+                        text: deleteContactButton.text
+                        color: "#b91c1c"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
             }
         }
     }
