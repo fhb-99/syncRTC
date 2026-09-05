@@ -78,6 +78,40 @@ public:
         }
         std::unique_ptr<SqlConnection> con(std::move(pool_.front()));
         pool_.pop();
+
+        // MySQL 可能会回收长时间空闲的连接，使用前先探活并按需重建。
+        lock.unlock();
+        bool is_valid = false;
+        try {
+            is_valid = con && con->_con && !con->_con->isClosed() && con->_con->isValid();
+        }
+        catch (sql::SQLException&) {
+            is_valid = false;
+        }
+
+        if (!is_valid) {
+            try {
+                sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
+                auto new_con = std::unique_ptr<sql::Connection>(driver->connect(url_, user_, pass_));
+                new_con->setSchema(schema_);
+                if (con) {
+                    con->_con = std::move(new_con);
+                } else {
+                    con = std::make_unique<SqlConnection>(new_con.release(), 0);
+                }
+                std::cout << "mysql connection reconnected" << std::endl;
+            }
+            catch (sql::SQLException& e) {
+                std::cerr << "mysql reconnect failed: " << e.what()
+                          << " (code=" << e.getErrorCode()
+                          << ", state=" << e.getSQLState() << ")" << std::endl;
+                returnConnection(std::move(con));
+                return nullptr;
+            }
+        }
+
+        con->_last_oper_time = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
         return con;
     }
 
