@@ -35,10 +35,18 @@ new_fixture() {
     printf 'new-gate\n' > "${STAGE}/artifacts/gate/GateServer"
     printf 'new-realtime\n' > "${STAGE}/artifacts/realtime/RealtimeServer"
     printf 'new-media\n' > "${STAGE}/artifacts/media/MediaServer"
-    printf '{}\n' > "${STAGE}/metadata.json"
+    printf '{"release_id":"%s","service":"all","commit":"%040d","tests":"passed"}\n' \
+        "${RELEASE_ID}" 0 > "${STAGE}/metadata.json"
     cp "${RELEASE_SCRIPT}" "${STAGE}/remote-release.sh"
     chmod +x "${STAGE}/remote-release.sh"
     touch "${STATE}/gate.active" "${STATE}/realtime.active" "${STATE}/media.active"
+
+    cat > "${PROC}/meminfo" <<'MEMINFO'
+MemTotal:        2097152 kB
+MemAvailable:   1048576 kB
+SwapTotal:      1048576 kB
+SwapFree:       1048576 kB
+MEMINFO
 
     mkdir -p "${PROC}/101" "${PROC}/102" "${PROC}/103"
     ln -s "${ROOT}/syncRTC-server/GateServer/bin/GateServer" "${PROC}/101/exe"
@@ -125,6 +133,20 @@ SH
 
 write_manifest() {
     local service="$1"
+    python3 - "${STAGE}/metadata.json" "${RELEASE_ID}" "${service}" <<'PY'
+import json
+import sys
+
+path, release_id, service = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump({
+        "release_id": release_id,
+        "service": service,
+        "commit": "0" * 40,
+        "tests": "passed",
+    }, handle)
+    handle.write("\n")
+PY
     local -a files=(metadata.json remote-release.sh)
     case "$service" in
         gate) files+=(artifacts/gate/GateServer) ;;
@@ -142,6 +164,13 @@ write_manifest() {
 run_release() {
     env PATH="${MOCK_BIN}:${PATH}" SYNCRTC_TEST_MODE=1 \
         SYNCRTC_TEST_ROOT="${ROOT}" SYNCRTC_TEST_PROC_ROOT="${PROC}" \
+        FAKE_STATE_DIR="${STATE}" bash "${RELEASE_SCRIPT}" "$@"
+}
+
+run_release_from_incoming() {
+    env PATH="${MOCK_BIN}:${PATH}" SYNCRTC_TEST_MODE=1 \
+        SYNCRTC_TEST_ROOT="${ROOT}" SYNCRTC_TEST_PROC_ROOT="${PROC}" \
+        SYNCRTC_TEST_INCOMING_ROOT="${INCOMING_ROOT}" \
         FAKE_STATE_DIR="${STATE}" bash "${RELEASE_SCRIPT}" "$@"
 }
 
@@ -225,6 +254,67 @@ test_dry_run_no_mutation() {
     cleanup_fixture
 }
 
+test_low_memory_before_stop() {
+    new_fixture; write_manifest gate
+    cat > "${PROC}/meminfo" <<'MEMINFO'
+MemTotal:        2097152 kB
+MemAvailable:    262144 kB
+SwapTotal:      1048576 kB
+SwapFree:       1048576 kB
+MEMINFO
+    if run_release --service gate --release-id "${RELEASE_ID}" --dry-run >/dev/null 2>&1; then
+        fail '低内存拦截'
+    elif [[ ! -s "${STATE}/operations.log" ]]; then pass '低内存在停服前拦截'; else fail '低内存时不应停服务'; fi
+    cleanup_fixture
+}
+
+test_high_swap_before_stop() {
+    new_fixture; write_manifest gate
+    cat > "${PROC}/meminfo" <<'MEMINFO'
+MemTotal:        2097152 kB
+MemAvailable:   1048576 kB
+SwapTotal:      1048576 kB
+SwapFree:        524288 kB
+MEMINFO
+    if run_release --service gate --release-id "${RELEASE_ID}" --dry-run >/dev/null 2>&1; then
+        fail 'Swap 阈值拦截'
+    elif [[ ! -s "${STATE}/operations.log" ]]; then pass 'Swap 超阈值在停服前拦截'; else fail 'Swap 超阈值时不应停服务'; fi
+    cleanup_fixture
+}
+
+test_incoming_is_copied_and_cleaned() {
+    new_fixture; write_manifest gate
+    INCOMING_ROOT="${FIXTURE}/incoming"
+    mkdir -p "${INCOMING_ROOT}"
+    mv "${STAGE}" "${INCOMING_ROOT}/${RELEASE_ID}"
+    if run_release_from_incoming --service gate --release-id "${RELEASE_ID}" --dry-run >/dev/null 2>&1; then
+        if [[ ! -e "${STAGE}" && ! -e "${INCOMING_ROOT}/${RELEASE_ID}" && ! -s "${STATE}/operations.log" ]]; then
+            pass 'incoming 复制到 root 暂存区并在 dry-run 后清理'
+        else
+            fail 'incoming 或 root 暂存区未按预期清理'
+        fi
+    else
+        fail 'incoming 固定入口 dry-run 执行失败'
+    fi
+    cleanup_fixture
+}
+
+test_incoming_symlink_rejected() {
+    new_fixture; write_manifest gate
+    INCOMING_ROOT="${FIXTURE}/incoming"
+    mkdir -p "${INCOMING_ROOT}"
+    mv "${STAGE}" "${INCOMING_ROOT}/${RELEASE_ID}"
+    ln -s /etc/passwd "${INCOMING_ROOT}/${RELEASE_ID}/unexpected-link"
+    if run_release_from_incoming --service gate --release-id "${RELEASE_ID}" --dry-run >/dev/null 2>&1; then
+        fail 'incoming 符号链接拦截'
+    elif [[ ! -e "${STAGE}" && ! -s "${STATE}/operations.log" ]]; then
+        pass 'incoming 符号链接在复制和停服前拦截'
+    else
+        fail 'incoming 符号链接失败后产生了暂存或停服动作'
+    fi
+    cleanup_fixture
+}
+
 test_invalid_service
 test_path_escape
 test_hash_mismatch_before_stop
@@ -232,6 +322,10 @@ test_ldd_missing_before_stop
 test_health_failure_rolls_back
 test_media_realtime_order
 test_dry_run_no_mutation
+test_low_memory_before_stop
+test_high_swap_before_stop
+test_incoming_is_copied_and_cleaned
+test_incoming_symlink_rejected
 
 echo "测试结果: passed=${passed} failed=${failed}"
 [[ "${failed}" -eq 0 ]]

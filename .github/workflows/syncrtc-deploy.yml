@@ -1,0 +1,148 @@
+name: SyncRTC CD
+
+on:
+  workflow_run:
+    workflows: ["SyncRTC CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: "生成发布产物的 CI Run ID"
+        required: true
+        type: string
+      commit_sha:
+        description: "CI 对应的 40 位 Commit SHA"
+        required: true
+        type: string
+      dry_run:
+        description: "只做服务器预检，不替换服务"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: syncrtc-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 部署 SyncRTC 服务端
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+
+    steps:
+      - name: 确认 CI 运行与提交
+        id: release
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          AUTO_RUN_ID: ${{ github.event.workflow_run.id }}
+          AUTO_COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_RUN_ID: ${{ inputs.ci_run_id }}
+          MANUAL_COMMIT_SHA: ${{ inputs.commit_sha }}
+          MANUAL_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            run_id="$AUTO_RUN_ID"
+            commit_sha="$AUTO_COMMIT_SHA"
+            dry_run=false
+          else
+            run_id="$MANUAL_RUN_ID"
+            commit_sha="$MANUAL_COMMIT_SHA"
+            dry_run="$MANUAL_DRY_RUN"
+          fi
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'run_id=%s\ncommit_sha=%s\ndry_run=%s\n' \
+            "$run_id" "$commit_sha" "$dry_run" >> "$GITHUB_OUTPUT"
+
+      - name: 下载 CI 发布产物
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: syncrtc-release-${{ steps.release.outputs.commit_sha }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.release.outputs.run_id }}
+          path: artifact
+
+      - name: 校验发布产物
+        id: metadata
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ steps.release.outputs.commit_sha }}
+        run: |
+          set -Eeuo pipefail
+          cd artifact
+          sha256sum --check --strict manifest.sha256
+          python3 - "$EXPECTED_COMMIT" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import re
+          import sys
+
+          expected_commit = sys.argv[1]
+          with open("metadata.json", "r", encoding="utf-8") as handle:
+              metadata = json.load(handle)
+
+          release_id = str(metadata.get("release_id", ""))
+          if metadata.get("commit") != expected_commit:
+              raise SystemExit("metadata commit 与 CI 提交不一致")
+          if metadata.get("service") != "all" or metadata.get("tests") != "passed":
+              raise SystemExit("发布范围或测试状态不符合要求")
+          if not re.fullmatch(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{8}", release_id):
+              raise SystemExit("metadata release_id 格式非法")
+          print(f"release_id={release_id}")
+          PY
+
+      - name: 配置受信任 SSH 连接
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DEPLOY_SSH_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: 上传并执行受控发布
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          RELEASE_ID: ${{ steps.metadata.outputs.release_id }}
+          DRY_RUN: ${{ steps.release.outputs.dry_run }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$DEPLOY_HOST" && "$DEPLOY_PORT" =~ ^[0-9]+$ && "$DEPLOY_USER" == "deploy-syncrtc" ]]
+          [[ "$RELEASE_ID" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$ ]]
+
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          incoming="/var/lib/github-deploy/syncrtc/incoming/${RELEASE_ID}"
+          ssh_opts=(-i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          scp_opts=(-i ~/.ssh/deploy_key -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+
+          ssh "${ssh_opts[@]}" "$target" \
+            "set -e; umask 077; test ! -e '$incoming'; install -d -m 0700 '$incoming'"
+          scp "${scp_opts[@]}" artifact/manifest.sha256 artifact/metadata.json \
+            artifact/remote-release.sh "$target:$incoming/"
+          scp "${scp_opts[@]}" -r artifact/artifacts "$target:$incoming/"
+
+          remote_args=(sudo /usr/local/sbin/deploy-syncrtc --service all --release-id "$RELEASE_ID")
+          if [[ "$DRY_RUN" == "true" ]]; then remote_args+=(--dry-run); fi
+          printf -v remote_command '%q ' "${remote_args[@]}"
+          ssh "${ssh_opts[@]}" "$target" "$remote_command"

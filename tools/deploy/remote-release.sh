@@ -2,11 +2,13 @@
 set -Eeuo pipefail
 
 readonly DEFAULT_DEPLOY_ROOT="/opt/syncrtc/backend"
+readonly DEFAULT_INCOMING_ROOT="/var/lib/github-deploy/syncrtc/incoming"
 readonly TEST_MODE="${SYNCRTC_TEST_MODE:-0}"
 
 if [[ "${TEST_MODE}" == "1" ]]; then
     DEPLOY_ROOT="${SYNCRTC_TEST_ROOT:?测试模式必须设置 SYNCRTC_TEST_ROOT}"
     PROC_ROOT="${SYNCRTC_TEST_PROC_ROOT:-/proc}"
+    INCOMING_ROOT="${SYNCRTC_TEST_INCOMING_ROOT:-}"
 else
     # 正式发布时禁止通过环境变量改写部署根目录，避免 sudo 环境或误操作把
     # 文件写到未审核的位置。测试注入只在显式测试模式下开放。
@@ -16,13 +18,14 @@ else
     fi
     DEPLOY_ROOT="${DEFAULT_DEPLOY_ROOT}"
     PROC_ROOT="/proc"
+    INCOMING_ROOT="${DEFAULT_INCOMING_ROOT}"
     if [[ "$(id -u)" -ne 0 ]]; then
         echo "远端发布脚本必须由 root 执行" >&2
         exit 77
     fi
 fi
 
-readonly DEPLOY_ROOT PROC_ROOT
+readonly DEPLOY_ROOT PROC_ROOT INCOMING_ROOT
 readonly UPDATES_ROOT="${DEPLOY_ROOT}/updates"
 readonly BACKUPS_ROOT="${DEPLOY_ROOT}/backups"
 readonly SERVER_ROOT="${DEPLOY_ROOT}/syncRTC-server"
@@ -88,6 +91,31 @@ esac
 readonly STAGE_DIR="${UPDATES_ROOT}/${RELEASE_ID}"
 readonly MANIFEST="${STAGE_DIR}/manifest.sha256"
 readonly BACKUP_DIR="${BACKUPS_ROOT}/${RELEASE_ID}"
+
+prepare_staging() {
+    # 单元测试默认直接准备 updates 目录；正式发布只从部署账号的 incoming
+    # 目录读取，并复制到 root 管理的暂存目录。上传目录中的脚本永不执行。
+    if [[ "${TEST_MODE}" == "1" && -z "${INCOMING_ROOT}" ]]; then
+        return 0
+    fi
+
+    local incoming_dir="${INCOMING_ROOT}/${RELEASE_ID}"
+    assert_under "${incoming_dir}" "${INCOMING_ROOT}"
+    [[ -d "${incoming_dir}" ]] || die "上传目录不存在"
+    [[ ! -e "${STAGE_DIR}" ]] || die "release-id 已存在，拒绝覆盖暂存目录"
+
+    if find "${incoming_dir}" -mindepth 1 \! -type d \! -type f -print -quit | grep -q .; then
+        die "上传目录包含符号链接或其他非普通文件"
+    fi
+
+    install -d -m 0750 -- "${STAGE_DIR}"
+    cp -a -- "${incoming_dir}/." "${STAGE_DIR}/"
+    if [[ "${TEST_MODE}" != "1" ]]; then
+        chown -R root:root -- "${STAGE_DIR}"
+    fi
+    find "${STAGE_DIR}" -type d -exec chmod 0750 {} +
+    find "${STAGE_DIR}" -type f -exec chmod 0640 {} +
+}
 
 declare -a SELECTED=()
 case "${SERVICE}" in
@@ -168,6 +196,52 @@ validate_package() {
     [[ "${actual_line_count}" -eq "${expected_line_count}" ]] || die "哈希清单内容不符合白名单"
     [[ "$(wc -l < "${MANIFEST}")" -eq "${expected_line_count}" ]] || die "哈希清单存在额外条目"
     (cd "${STAGE_DIR}" && sha256sum --check --strict manifest.sha256) | redact
+
+    if [[ "${TEST_MODE}" != "1" ]]; then
+        cmp -s -- "${STAGE_DIR}/remote-release.sh" "$(readlink -f -- "$0")" || \
+            die "发布包中的发布器版本与服务器固定入口不一致"
+    fi
+}
+
+validate_metadata() {
+    python3 - "${STAGE_DIR}/metadata.json" "${RELEASE_ID}" "${SERVICE}" <<'PY'
+import json
+import re
+import sys
+
+path, release_id, service = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as handle:
+    metadata = json.load(handle)
+
+if metadata.get("release_id") != release_id:
+    raise SystemExit("metadata release_id 与发布参数不一致")
+if metadata.get("service") != service:
+    raise SystemExit("metadata service 与发布参数不一致")
+if not re.fullmatch(r"[0-9a-f]{40}", str(metadata.get("commit", ""))):
+    raise SystemExit("metadata commit 不是 40 位小写 Git SHA")
+if metadata.get("tests") != "passed":
+    raise SystemExit("metadata 未标记测试通过")
+PY
+}
+
+check_resources() {
+    local mem_available_mib swap_used_mib disk_free_mib
+    [[ -r "${PROC_ROOT}/meminfo" ]] || die "无法读取内存信息"
+    mem_available_mib="$(( $(awk '/MemAvailable/ {print $2}' "${PROC_ROOT}/meminfo") / 1024 ))"
+    swap_used_mib="$(( $(awk '
+        /SwapTotal/ { total=$2 }
+        /SwapFree/ { free=$2 }
+        END { print total-free }
+    ' "${PROC_ROOT}/meminfo") / 1024 ))"
+    disk_free_mib="$(df -Pm -- "${DEPLOY_ROOT}" | awk 'NR == 2 { print $4 }')"
+
+    [[ "${mem_available_mib}" =~ ^[0-9]+$ ]] || die "可用内存检查结果无效"
+    [[ "${swap_used_mib}" =~ ^[0-9]+$ ]] || die "Swap 检查结果无效"
+    [[ "${disk_free_mib}" =~ ^[0-9]+$ ]] || die "磁盘空间检查结果无效"
+    (( mem_available_mib >= 350 )) || die "可用内存低于 350 MiB"
+    (( swap_used_mib <= 256 )) || die "Swap 已使用超过 256 MiB"
+    (( disk_free_mib >= 5120 )) || die "部署磁盘可用空间低于 5 GiB"
+    echo "资源预检通过: available_memory=${mem_available_mib}MiB swap_used=${swap_used_mib}MiB disk_free=${disk_free_mib}MiB"
 }
 
 validate_elf() {
@@ -265,6 +339,8 @@ record_states() {
 preflight() {
     validate_paths
     validate_package
+    validate_metadata
+    check_resources
     check_dependencies
 
     local name
@@ -429,6 +505,22 @@ cleanup_stage() {
     rmdir -- "${STAGE_DIR}"
 }
 
+cleanup_incoming() {
+    [[ "${KEEP_STAGING}" -eq 0 ]] || return 0
+    [[ -n "${INCOMING_ROOT}" ]] || return 0
+    local incoming_dir="${INCOMING_ROOT}/${RELEASE_ID}"
+    assert_under "${incoming_dir}" "${INCOMING_ROOT}"
+    [[ -d "${incoming_dir}" ]] || return 0
+    find "${incoming_dir}" -depth -mindepth 1 -delete
+    rmdir -- "${incoming_dir}"
+}
+
+if [[ "${TEST_MODE}" != "1" ]]; then
+    exec 9>/run/lock/syncrtc-deploy.lock
+    flock -n 9 || die "已有 SyncRTC 发布正在执行"
+fi
+
+prepare_staging
 record_states
 preflight
 
@@ -436,6 +528,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
     echo "DRY-RUN 通过：构建包、路径、哈希、ELF、ldd、配置、依赖和当前服务健康检查均通过"
     echo "DRY-RUN 未停止服务、未替换文件、未修改配置/数据库/防火墙"
     cleanup_stage
+    cleanup_incoming
     exit 0
 fi
 
@@ -446,5 +539,6 @@ deploy_selected
 trap - ERR INT TERM
 
 cleanup_stage
+cleanup_incoming
 echo "发布成功: service=${SERVICE} release=${RELEASE_ID}"
 echo "验收边界：仅证明文件、进程、端口/UDS、基础接口、配置与依赖健康；不代表端到端音视频已通过"

@@ -25,7 +25,7 @@ $script:ReleaseId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), ([Guid]::
 $script:TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("syncrtc-publish-{0}" -f $script:ReleaseId)
 $script:PackageRoot = Join-Path $script:TempRoot $script:ReleaseId
 $script:SourceRoot = Join-Path $script:TempRoot 'source'
-$script:RemoteStage = "$($script:RemoteRoot)/updates/$($script:ReleaseId)"
+$script:RemoteStage = "/var/lib/github-deploy/syncrtc/incoming/$($script:ReleaseId)"
 $script:Images = @{}
 
 $serviceInfo = @{
@@ -302,14 +302,16 @@ function New-ReleasePackage {
 
 function Invoke-RemoteRelease {
     Write-Host '[5/7] 上传到远端时间戳暂存目录并执行发布'
-    $mkdirCommand = "set -e; stage='$($script:RemoteStage)'; case `"`$stage`" in /opt/syncrtc/backend/updates/$($script:ReleaseId)) ;; *) exit 65;; esac; sudo install -d -m 0755 -o `"`$(id -un)`" -g `"`$(id -gn)`" -- `"`$stage`""
+    $mkdirCommand = "set -e; stage='$($script:RemoteStage)'; case `"`$stage`" in /var/lib/github-deploy/syncrtc/incoming/$($script:ReleaseId)) ;; *) exit 65;; esac; install -d -m 0700 -- `"`$stage`""
     Invoke-Native 'ssh.exe' @('-o', 'BatchMode=yes', '-o', "ConnectTimeout=$TimeoutSeconds", $script:SshAlias, $mkdirCommand) '创建远端暂存目录'
     $uploadItems = @(
         (Join-Path $script:PackageRoot 'manifest.sha256'), (Join-Path $script:PackageRoot 'metadata.json'),
         (Join-Path $script:PackageRoot 'remote-release.sh'), (Join-Path $script:PackageRoot 'artifacts')
     )
     Invoke-Native 'scp.exe' (@('-r', '-o', 'BatchMode=yes', '-o', "ConnectTimeout=$TimeoutSeconds") + $uploadItems + @("$($script:SshAlias):$($script:RemoteStage)/")) '上传发布白名单包'
-    $remoteArgs = @('sudo', 'bash', "$($script:RemoteStage)/remote-release.sh", '--service', $Service, '--release-id', $script:ReleaseId)
+    # 上传目录中的脚本只参与哈希和版本一致性校验；真正执行的是服务器上
+    # root:root 持有的固定入口，避免部署账号替换将被 sudo 执行的文件。
+    $remoteArgs = @('sudo', '/usr/local/sbin/deploy-syncrtc', '--service', $Service, '--release-id', $script:ReleaseId)
     if ($DryRun) { $remoteArgs += '--dry-run' }
     if ($KeepStaging) { $remoteArgs += '--keep-staging' }
     Invoke-Native 'ssh.exe' @('-o', 'BatchMode=yes', '-o', "ConnectTimeout=$TimeoutSeconds", $script:SshAlias, ($remoteArgs -join ' ')) '远端事务发布' -Redact
