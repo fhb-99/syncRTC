@@ -1,0 +1,50 @@
+name: SyncRTC CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: syncrtc-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-build-test:
+    name: 服务端构建、测试与打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: 测试远端事务发布器
+        run: bash tools/deploy/tests/remote-release-tests.sh
+
+      - name: 构建并测试三个服务
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          release_id="$(date -u '+%Y%m%d-%H%M%S')-${GITHUB_SHA:0:8}"
+          bash tools/deploy/ci-package.sh \
+            --service all \
+            --commit "$GITHUB_SHA" \
+            --release-id "$release_id" \
+            --output "$GITHUB_WORKSPACE/artifact"
+
+      - name: 上传 main 发布产物
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: syncrtc-release-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
