@@ -1,0 +1,100 @@
+# syntax=docker/dockerfile:1.7
+
+# 发布目标运行在 Ubuntu 22.04 x86_64。构建镜像固定同一发行版，避免把
+# Windows 或 WSL Ubuntu 24.04 生成的二进制直接带到服务器。
+FROM --platform=linux/amd64 ubuntu:22.04 AS dependencies
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+ARG REDIS_PLUS_PLUS_VERSION=1.3.15
+ARG UBUNTU_MIRROR=http://mirrors.aliyun.com/ubuntu
+
+RUN test "${TARGETARCH}" = "amd64" \
+    && sed -i \
+        -e "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" \
+        -e "s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" \
+        /etc/apt/sources.list \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libboost-filesystem-dev \
+        libboost-system-dev \
+        libboost-thread-dev \
+        libcrypt-dev \
+        libgrpc++-dev \
+        libhiredis-dev \
+        libjsoncpp-dev \
+        libmysqlclient-dev \
+        libmysqlcppconn-dev \
+        libprotobuf-dev \
+        libsrtp2-dev \
+        libssl-dev \
+        ninja-build \
+        pkg-config \
+        protobuf-compiler \
+        protobuf-compiler-grpc \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04 没有项目所需的 redis-plus-plus 开发包。固定版本单独构建，
+# 这一层只在 Dockerfile 或版本改变时重建，可复用 Docker 构建缓存。
+RUN git clone --branch "${REDIS_PLUS_PLUS_VERSION}" --depth 1 \
+        https://github.com/sewenew/redis-plus-plus.git /tmp/redis-plus-plus \
+    && cmake -S /tmp/redis-plus-plus -B /tmp/redis-plus-plus/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DREDIS_PLUS_PLUS_BUILD_TEST=OFF \
+        -DREDIS_PLUS_PLUS_BUILD_SHARED=ON \
+    && cmake --build /tmp/redis-plus-plus/build --parallel 2 \
+    && cmake --install /tmp/redis-plus-plus/build \
+    && ldconfig \
+    && rm -rf /tmp/redis-plus-plus
+
+FROM dependencies AS build
+
+ARG SERVICE
+# 服务会把 PROJECT_ROOT_DIR 编译进二进制，构建路径必须与云端部署路径一致。
+WORKDIR /opt/syncrtc/backend
+COPY . /opt/syncrtc/backend
+
+# 为 Ubuntu 22.04 发行版的 gRPC 包补充 CMake CONFIG 入口。该文件只引用
+# apt 已安装的 grpc++ 库和插件，不把本地凭据或额外二进制复制进镜像。
+RUN install -D -m 0644 /opt/syncrtc/backend/.publisher/cmake/gRPCConfig.cmake \
+        /usr/local/lib/cmake/gRPC/gRPCConfig.cmake
+
+# 源码快照会排除所有真实 config.ini。RealtimeServer 和 MediaServer 的
+# CMake 构建后步骤要求配置文件存在，因此只在隔离的构建镜像内创建空文件；
+# 发布包仍然只导出 ELF，不会携带这个占位文件。
+RUN case "${SERVICE}" in \
+        gate) \
+            source_dir=/opt/syncrtc/backend/syncRTC-server/GateServer; \
+            binary=GateServer; \
+            extra_args='-DGATE_SERVER_ENABLE_MYSQL=ON -DGATE_SERVER_ENABLE_GRPC=ON' \
+            ;; \
+        realtime) \
+            source_dir=/opt/syncrtc/backend/syncRTC-server/RealtimeServer; \
+            binary=RealtimeServer; \
+            extra_args='' \
+            ;; \
+        media) \
+            source_dir=/opt/syncrtc/backend/syncRTC-server/MediaServer; \
+            binary=MediaServer; \
+            extra_args='' \
+            ;; \
+        *) echo "不支持的构建目标: ${SERVICE}" >&2; exit 64 ;; \
+    esac \
+    && mkdir -p "${source_dir}/conf" "${source_dir}/bin/conf" \
+    && : > "${source_dir}/conf/config.ini" \
+    && cmake -S "${source_dir}" -B "/build/${SERVICE}" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        ${extra_args} \
+    && grep -qx 'CMAKE_BUILD_TYPE:STRING=Release' "/build/${SERVICE}/CMakeCache.txt" \
+    && cmake --build "/build/${SERVICE}" --parallel 2 \
+    && install -D -m 0755 "${source_dir}/bin/${binary}" "/out/${binary}"
+
+# publish.ps1 会先使用 build 阶段运行测试，再从同一镜像复制已经测试过的
+# 二进制，避免测试与最终上传文件来自两次不同的构建。
+CMD ["/bin/bash"]
