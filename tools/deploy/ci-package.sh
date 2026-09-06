@@ -144,8 +144,18 @@ EOF
     done
     [[ "${ready}" -eq 1 ]] || { echo "临时 MySQL 未在 180 秒内就绪" >&2; docker logs "${MYSQL}"; exit 1; }
 
-    docker exec "${REDIS}" redis-cli -a "${secret}" ping 2>/dev/null | grep -Fxq PONG || {
-        echo "临时 Redis 认证检查失败" >&2
+    # docker run 返回时 Redis 进程可能仍在初始化，限时重试避免启动竞态。
+    ready=0
+    for _ in $(seq 1 30); do
+        if docker exec "${REDIS}" redis-cli -a "${secret}" ping 2>/dev/null | grep -Fxq PONG; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "${ready}" -eq 1 ]] || {
+        echo "临时 Redis 未在 30 秒内完成认证就绪检查" >&2
+        docker logs "${REDIS}"
         exit 1
     }
 }
