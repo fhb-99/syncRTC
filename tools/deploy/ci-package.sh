@@ -122,6 +122,8 @@ Database=syncrtc
 InternalSocketPath=/tmp/syncrtc-mediaserver.sock
 EOF
     chmod 0600 "${INFRA_ROOT}"/*
+    # Redis 镜像会降权运行，挂载的配置文件需要允许容器内用户读取。
+    chmod 0644 "${INFRA_ROOT}/redis.conf"
 
     docker network create "${NETWORK}" >/dev/null
     INFRA_STARTED=1
