@@ -1,0 +1,55 @@
+name: SyncRTC AI CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'syncRTC-server/AIServer/**'
+      - '.github/workflows/syncrtc-ai-ci.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'syncRTC-server/AIServer/**'
+      - '.github/workflows/syncrtc-ai-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: syncrtc-ai-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-build-test:
+    name: AIService 构建、测试与打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: syncRTC-server/AIServer/requirements.txt
+
+      - name: 安装 AIService 依赖
+        run: python -m pip install -r syncRTC-server/AIServer/requirements.txt
+
+      - name: 构建、测试并打包 AIService
+        env:
+          PYTHON_BIN: python
+        run: bash syncRTC-server/AIServer/scripts/ci.sh "$GITHUB_WORKSPACE/artifact"
+
+      - name: 上传 main 发布产物
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: syncrtc-ai-release-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
