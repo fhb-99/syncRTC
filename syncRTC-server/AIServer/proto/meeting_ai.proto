@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package message;
+
+service MeetingAiService {
+    rpc AskAssistant (AskAssistantRequest) returns (AskAssistantResponse) {}
+}
+
+message AskAssistantRequest {
+    string question = 1;
+}
+
+message AskAssistantResponse {
+    int32 error = 1;
+    string answer = 2;
+    string error_message = 3;
+}
