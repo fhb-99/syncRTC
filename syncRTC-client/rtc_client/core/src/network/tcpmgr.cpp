@@ -114,6 +114,7 @@ void TcpMgr::initHandlers()
     m_handlers.insert(ID_MEDIA_ANSWER_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_MEDIA_CANDIDATE_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_MEDIA_RENEGOTIATION_OFFER, forwardJsonResponse);
+    m_handlers.insert(ID_AI_ASK_RESPONSE, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

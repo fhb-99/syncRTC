@@ -7,24 +7,55 @@ import QtQuick.Layouts
 Item {
     id: root
 
+    // 保留该信号以兼容 MeetingShell 的现有连接；当前页面已接入真实问答，不再发送演示提示。
     signal demonstrationAction(string message)
 
-    // 以下能力卡片为固定展示数据，当前不调用任何 AI 服务。
+    property bool waitingForAnswer: false
+    property string answerText: ""
+    property string errorText: ""
+
+    function submitQuestion() {
+        var question = questionInput.text.trim()
+        if (question.length === 0) {
+            answerText = ""
+            errorText = "请输入问题"
+            questionInput.forceActiveFocus()
+            return
+        }
+        if (waitingForAnswer)
+            return
+
+        errorText = ""
+        answerText = ""
+        waitingForAnswer = true
+        // RealtimeController 负责复用已登录的 TCP 控制连接。
+        realtimeController.askAiQuestion(question)
+    }
+
+    Connections {
+        target: realtimeController
+
+        function onAiAnswerReceived(answer) {
+            root.answerText = answer
+        }
+
+        function onAiRequestFailed(error, message) {
+            void(error)
+            root.errorText = message
+        }
+
+        function onAiRequestFinished() {
+            root.waitingForAnswer = false
+        }
+    }
+
+    // 能力卡片保留为产品入口展示，当前只接通“会议问答”。
     ListModel {
         id: capabilityModel
 
-        ListElement { title: "会议问答"; description: "围绕会议上下文快速获得答案"; accentColor: "#2563eb" }
+        ListElement { title: "会议问答"; description: "直接提问并获得普通中文回答"; accentColor: "#2563eb" }
         ListElement { title: "行动项提取"; description: "识别讨论中的待跟进事项"; accentColor: "#0ea5e9" }
         ListElement { title: "知识检索"; description: "从团队资料中查找相关信息"; accentColor: "#10b981" }
-    }
-
-    // 以下最近任务为静态展示数据，后续接入 AI 服务后替换为真实任务记录。
-    ListModel {
-        id: recentTasksModel
-
-        ListElement { title: "产品需求澄清"; detail: "今天 09:30 · 准备就绪"; status: "已完成"; statusColor: "#16a34a" }
-        ListElement { title: "接口设计咨询"; detail: "昨天 16:20 · 等待继续提问"; status: "进行中"; statusColor: "#2563eb" }
-        ListElement { title: "会前资料整理"; detail: "周二 14:00 · 资料已收集"; status: "已完成"; statusColor: "#16a34a" }
     }
 
     Rectangle {
@@ -32,7 +63,7 @@ Item {
         color: "#f5f8ff"
     }
 
-    // 固定工作台占满可用区域，仅“最近任务”列表在自身区域内滚动。
+    // 固定工作台占满可用区域，问答面板使用剩余空间显示较长答案。
     ColumnLayout {
         anchors.fill: parent
         anchors.leftMargin: 52
@@ -58,7 +89,7 @@ Item {
                 }
 
                 Text {
-                    text: "用智能问答、行动项和知识检索辅助会议协作。"
+                    text: "在会议应用中直接提问，获得普通中文回答。"
                     color: "#64748b"
                     font.pixelSize: 15
                 }
@@ -72,7 +103,7 @@ Item {
                 text: "新建提问"
                 font.pixelSize: 14
                 font.bold: true
-                onClicked: root.demonstrationAction("AI 助手功能仅为界面演示，尚未接入服务")
+                onClicked: questionInput.forceActiveFocus()
 
                 background: Rectangle {
                     radius: 9
@@ -144,7 +175,10 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.demonstrationAction("AI 助手功能仅为界面演示，尚未接入服务")
+                        onClicked: {
+                            if (capabilityCard.title === "会议问答")
+                                questionInput.forceActiveFocus()
+                        }
                     }
                 }
             }
@@ -161,115 +195,73 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 28
-                spacing: 16
+                spacing: 14
 
                 Text {
-                    text: "最近任务"
+                    text: "会议问答"
                     color: "#0f172a"
                     font.pixelSize: 21
                     font.bold: true
                 }
 
-                ListView {
-                    id: recentTasksList
+                TextArea {
+                    id: questionInput
 
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: recentTasksModel
-                    spacing: 10
-
-                    delegate: Rectangle {
-                        id: taskCard
-
-                        required property string title
-                        required property string detail
-                        required property string status
-                        required property color statusColor
-
-                        width: ListView.view.width
-                        height: 78
-                        radius: 9
-                        color: taskMouseArea.containsMouse ? "#f4f8ff" : "#f8fafc"
+                    Layout.preferredHeight: 84
+                    enabled: !root.waitingForAnswer
+                    placeholderText: "请输入你想了解的问题"
+                    wrapMode: TextArea.Wrap
+                    font.pixelSize: 15
+                    color: "#0f172a"
+                    background: Rectangle {
+                        radius: 8
+                        color: "#f8fafc"
                         border.color: "#dbe3ef"
+                    }
+                }
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 18
-                            anchors.rightMargin: 18
-                            anchors.topMargin: 14
-                            anchors.bottomMargin: 14
-                            spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
 
-                            Rectangle {
-                                Layout.preferredWidth: 10
-                                Layout.preferredHeight: 44
-                                radius: 5
-                                color: taskCard.statusColor
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 220
-                                Layout.alignment: Qt.AlignVCenter
-                                spacing: 2
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: taskCard.title
-                                    color: "#0f172a"
-                                    font.pixelSize: 16
-                                    font.bold: true
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: taskCard.detail
-                                    color: "#64748b"
-                                    font.pixelSize: 13
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            Text {
-                                Layout.preferredWidth: 88
-                                Layout.alignment: Qt.AlignVCenter
-                                text: taskCard.status
-                                color: taskCard.statusColor
-                                font.pixelSize: 13
-                                font.bold: true
-                                horizontalAlignment: Text.AlignRight
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-
-                        MouseArea {
-                            id: taskMouseArea
-
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.demonstrationAction("AI 助手功能仅为界面演示，尚未接入服务")
-                        }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.waitingForAnswer ? "正在请求 AI……" : root.errorText
+                        color: root.errorText.length > 0 && !root.waitingForAnswer ? "#dc2626" : "#64748b"
+                        font.pixelSize: 13
+                        elide: Text.ElideRight
                     }
 
-                    ScrollBar.vertical: ScrollBar {
-                        id: tasksScrollBar
+                    Button {
+                        id: sendQuestionButton
 
-                        policy: ScrollBar.AsNeeded
-                        width: 8
+                        Layout.preferredWidth: 96
+                        Layout.preferredHeight: 38
+                        text: root.waitingForAnswer ? "请求中" : "发送问题"
+                        enabled: !root.waitingForAnswer
+                        onClicked: root.submitQuestion()
+                    }
+                }
 
-                        background: Rectangle {
-                            implicitWidth: 6
-                            radius: 3
-                            color: "#eef3fb"
-                        }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 120
+                    radius: 8
+                    color: "#f8fafc"
+                    border.color: "#dbe3ef"
 
-                        contentItem: Rectangle {
-                            implicitWidth: 6
-                            radius: 3
-                            color: tasksScrollBar.pressed ? "#60a5fa" : tasksScrollBar.hovered ? "#93c5fd" : "#bfdbfe"
+                    ScrollView {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        clip: true
+
+                        Text {
+                            width: parent.width
+                            text: root.answerText.length > 0 ? root.answerText : "AI 的回答会显示在这里"
+                            color: root.answerText.length > 0 ? "#0f172a" : "#94a3b8"
+                            font.pixelSize: 15
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }

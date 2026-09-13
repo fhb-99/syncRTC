@@ -63,6 +63,9 @@ enum RequestID {
     ID_MEDIA_CANDIDATE_RESPONSE = 1041,
     ID_MEDIA_RENEGOTIATION_OFFER = 1042,
     ID_MEDIA_RENEGOTIATION_ANSWER_REQUEST = 1043,
+    // 会议内普通 AI 问答：问题和答案都通过 RealtimeServer 转发。
+    ID_AI_ASK_REQUEST = 1044,
+    ID_AI_ASK_RESPONSE = 1045,
 };
 
 enum ErrorCodes

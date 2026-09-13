@@ -1,6 +1,7 @@
 #include "realtimecontroller.h"
 
 #include <QDebug>
+#include <QJsonDocument>
 #include <QMetaObject>
 
 RealtimeController::RealtimeController(CurrentUserState *currentUser, QObject *parent)
@@ -20,6 +21,21 @@ RealtimeController::RealtimeController(CurrentUserState *currentUser, QObject *p
 void RealtimeController::setMediaController(QObject *mediaController)
 {
     m_media = mediaController;
+}
+
+void RealtimeController::askAiQuestion(const QString &question)
+{
+    const QString cleanQuestion = question.trimmed();
+    if (cleanQuestion.isEmpty()) {
+        emit aiRequestFailed(ErrorCodes::ERROR_JSON, QStringLiteral("问题不能为空。"));
+        emit aiRequestFinished();
+        return;
+    }
+
+    // 客户端只负责把问题交给现有 TCP 控制连接，API Key 和模型调用都留在服务端。
+    const QJsonObject request{{QStringLiteral("question"), cleanQuestion}};
+    emit TcpMgr::GetInstance()->signal_send_data(
+        ID_AI_ASK_REQUEST, QJsonDocument(request).toJson(QJsonDocument::Compact));
 }
 
 void RealtimeController::initHandlers()
@@ -210,6 +226,28 @@ void RealtimeController::initHandlers()
         if (!handled) {
             qWarning() << "Media renegotiation offer invalid";
         }
+    });
+
+    m_handlers.insert(ID_AI_ASK_RESPONSE, [this](const QJsonObject &json) {
+        const int error = json.value(QStringLiteral("error"))
+                              .toInt(ErrorCodes::ERROR_JSON);
+        if (error != ErrorCodes::SUCCESS) {
+            emit aiRequestFailed(
+                error,
+                json.value(QStringLiteral("error_message"))
+                    .toString(QStringLiteral("AI 问答失败，请稍后再试。")));
+            emit aiRequestFinished();
+            return;
+        }
+
+        const QString answer = json.value(QStringLiteral("answer")).toString().trimmed();
+        if (answer.isEmpty()) {
+            emit aiRequestFailed(ErrorCodes::ERROR_JSON,
+                                 QStringLiteral("AI 没有返回有效答案。"));
+        } else {
+            emit aiAnswerReceived(answer);
+        }
+        emit aiRequestFinished();
     });
 }
 
