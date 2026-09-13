@@ -6,7 +6,9 @@ from . import meeting_ai_pb2 as meeting__ai__pb2
 
 
 class MeetingAiServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """会议内普通文本问答接口。
+    该能力不绑定 meeting_id，不读取音频，也不携带会议历史上下文。
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -22,7 +24,9 @@ class MeetingAiServiceStub(object):
 
 
 class MeetingAiServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """会议内普通文本问答接口。
+    该能力不绑定 meeting_id，不读取音频，也不携带会议历史上下文。
+    """
 
     def AskAssistant(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -46,7 +50,9 @@ def add_MeetingAiServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class MeetingAiService(object):
-    """Missing associated documentation comment in .proto file."""
+    """会议内普通文本问答接口。
+    该能力不绑定 meeting_id，不读取音频，也不携带会议历史上下文。
+    """
 
     @staticmethod
     def AskAssistant(request,
