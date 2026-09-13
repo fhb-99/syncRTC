@@ -81,12 +81,13 @@ enum ErrorCodes
     ERROR_MEETING_STATUS = 105,
     ERROR_MEETING_FULL = 106,
     ERROR_MEETING_ACCESS = 107,
-    ERROR_VARIFY_EXPIRED = 108, //验证码过期
-    ERROR_VARIFYCODE = 109, //验证码错误
-    ERROR_USER_EXIST = 110,       //用户已经存在
-    ERROR_PASSWORD_INVALID = 111, // 密码无效，不匹配
+    // 以下认证错误码与 GateServer 的 HTTP 登录/注册接口保持一致。
+    ERROR_VARIFY_EXPIRED = 1003, //验证码过期
+    ERROR_VARIFYCODE = 1004, //验证码错误
+    ERROR_USER_EXIST = 1005,       //用户已经存在
+    ERROR_PASSWORD_INVALID = 1006, // 密码无效，不匹配
     ERROR_TOKEN = 112,
-    ERROR_SESSION_INVALID = 113,
+    ERROR_SESSION_INVALID = 1007,
 };
 
 enum Modules {

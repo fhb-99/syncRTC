@@ -44,6 +44,8 @@ void RealtimeController::initHandlers()
     m_handlers.insert(AUTH_LOGIN_RESPONSE, [this](const QJsonObject &json) {
         const int error = json.value("error").toInt(ErrorCodes::ERROR_JSON);
         if (error != ErrorCodes::SUCCESS) {
+            qWarning() << "[RealtimeController] RealtimeServer login rejected. error="
+                       << error;
             emit loginFailed(error);
             return;
         }
@@ -55,11 +57,13 @@ void RealtimeController::initHandlers()
         const QJsonArray recentMeetingJson = json.value("meetings").toArray();
 
         if (!m_profile->applyProfile(profileJson)) {
+            qWarning() << "[RealtimeController] Login response profile data is invalid";
             emit loginFailed(ErrorCodes::ERROR_JSON);
             return;
         }
 
         if (!m_meeting->applyRecentMeeting(recentMeetingJson)) {
+            qWarning() << "[RealtimeController] Login response meetings data is invalid";
             emit loginFailed(ErrorCodes::ERROR_JSON);
             return;
         }
