@@ -2,15 +2,19 @@ syntax = "proto3";
 
 package message;
 
+// 会议内普通文本问答接口。
+// 该能力不绑定 meeting_id，不读取音频，也不携带会议历史上下文。
 service MeetingAiService {
     rpc AskAssistant (AskAssistantRequest) returns (AskAssistantResponse) {}
 }
 
 message AskAssistantRequest {
+    // 只传递用户当前输入的问题，会议身份由上游登录连接负责校验。
     string question = 1;
 }
 
 message AskAssistantResponse {
+    // 0 表示成功，非 0 表示参数或模型服务错误。
     int32 error = 1;
     string answer = 2;
     string error_message = 3;

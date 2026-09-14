@@ -29,6 +29,8 @@ set(REALTIME_LOGIC_SOURCES
     src/service/LogicSystem.cpp
     src/storage/RedisMgr.cpp
     src/storage/MySqlMgr.cpp
+    src/common/meeting_ai.pb.cc
+    src/common/meeting_ai.grpc.pb.cc
 )
 
 set(REAL_SERVER_SOURCES
@@ -41,6 +43,8 @@ add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 
 find_package(Boost REQUIRED COMPONENTS filesystem system)
 find_package(Threads REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
 find_library(CRYPT_LIBRARY NAMES crypt REQUIRED)
 
@@ -80,6 +84,8 @@ set(REALTIME_LOGIC_LIBRARIES
     Boost::filesystem
     Boost::system
     JsonCpp::JsonCpp
+    gRPC::grpc++
+    protobuf::libprotobuf
     ${CRYPT_LIBRARY}
     SyncRTC::RedisPlusPlus
     MySQL::ConnectorCpp
