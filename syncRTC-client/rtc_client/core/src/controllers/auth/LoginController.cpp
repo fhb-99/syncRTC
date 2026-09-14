@@ -9,6 +9,31 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
+namespace {
+
+QString loginErrorMessage(int error)
+{
+    // GateServer 当前不会返回 error_message，客户端根据统一错误码给出明确提示。
+    switch (error) {
+    case ErrorCodes::ERROR_PASSWORD:
+        return QStringLiteral("密码格式不正确，请重新输入");
+    case ErrorCodes::ERROR_PASSWORD_INVALID:
+        return QStringLiteral("密码错误，请重新输入");
+    case ErrorCodes::ERROR_JSON:
+        return QStringLiteral("登录请求无效，请检查账号和密码");
+    case ErrorCodes::ERROR_REDIS:
+        return QStringLiteral("登录服务暂时无法校验会话，请稍后重试");
+    case ErrorCodes::ERROR_MYSQL:
+        return QStringLiteral("账号信息校验失败，请稍后重试");
+    case ErrorCodes::ERROR_SESSION_INVALID:
+        return QStringLiteral("登录状态已过期，请重新登录");
+    default:
+        return QStringLiteral("登录服务返回未知错误，请稍后重试（错误码：%1）").arg(error);
+    }
+}
+
+} // namespace
+
 LoginController::LoginController(ClientSession *clientSession, QObject *parent,
                                  const QString &credentialTarget)
     : QObject(parent),
@@ -34,6 +59,7 @@ void LoginController::LoginRequest(const QString &account, const QString &passwo
     qDebug() << "Login request";
     if (!checkPasswordValid(password)) {
         emit loginFailed("密码格式不正确");
+        qWarning() << "[LoginController] Password rejected by local format check";
         return;
     }
 
@@ -89,8 +115,11 @@ void LoginController::initHttpHandlers()
                 return;
             }
 
-            emit loginFailed("登录失败");
-            qDebug() << "Login request failed:" << error;
+            const QString reason = loginErrorMessage(error);
+            emit loginFailed(reason);
+            qWarning() << "[LoginController] HTTP login rejected. mode="
+                       << (m_loginMode == LoginMode::Password ? "password" : "remembered")
+                       << "error=" << error << "reason=" << reason;
             return;
         }
 
@@ -183,20 +212,23 @@ bool LoginController::clearRememberedSession()
 void LoginController::slot_login_mod_finish(RequestID reqID, QByteArray res, ErrorCodes error)
 {
     if (error != ErrorCodes::SUCCESS) {
-        emit loginFailed("网络异常");
-        qDebug() << "Login HTTP network error:" << error;
+        emit loginFailed("无法连接登录服务，请检查网络后重试");
+        qWarning() << "[LoginController] HTTP login network error. request_id="
+                   << static_cast<int>(reqID) << "error=" << error;
         return;
     }
 
     const QJsonDocument jsonDoc = QJsonDocument::fromJson(res);
     if (!jsonDoc.isObject()) {
-        emit loginFailed("数据异常");
-        qDebug() << "Login HTTP JSON parse error";
+        emit loginFailed("登录服务返回的数据格式错误，请稍后重试");
+        qWarning() << "[LoginController] HTTP login response is not a JSON object. bytes="
+                   << res.size();
         return;
     }
 
     if (!m_handlers.contains(reqID)) {
-        qDebug() << "No handler for request id:" << reqID;
+        qWarning() << "[LoginController] No HTTP login handler. request_id="
+                   << static_cast<int>(reqID);
         return;
     }
 
@@ -207,6 +239,7 @@ void LoginController::slot_connect_success(bool success)
 {
     if (!success) {
         emit loginFailed("TCP 连接失败");
+        qWarning() << "[LoginController] RealtimeServer TCP connection failed";
         return;
     }
 
@@ -223,5 +256,6 @@ void LoginController::slot_connect_success(bool success)
 
 void LoginController::slot_login_failed(int error)
 {
-    emit loginFailed(QString("登录失败，错误码：%1").arg(error));
+    emit loginFailed(QString("实时服务连接异常，请稍后重试"));
+    qWarning() << "[LoginController] RealtimeServer login failed. error=" << error;
 }

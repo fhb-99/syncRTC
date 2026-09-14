@@ -25,6 +25,22 @@ Item {
         noticeIsError = isError
     }
 
+    function realtimeLoginErrorMessage(error) {
+        // RealtimeServer 的登录回包只有错误码，这里把已知原因翻译成用户能直接理解的提示。
+        switch (error) {
+        case 1:
+            return "登录认证请求格式错误，请重新登录"
+        case 2:
+            return "登录服务暂时无法校验会话，请稍后重试"
+        case 3:
+            return "登录服务查询账号失败，请稍后重试"
+        case 112:
+            return "登录凭据无效，请重新登录"
+        default:
+            return "实时服务认证失败，请稍后重试（错误码：" + error + "）"
+        }
+    }
+
     function validateForm() {
         accountError = accountInput.text.trim().length === 0 ? "请输入邮箱或用户名" : ""
         passwordError = passwordInput.text.length === 0 ? "请输入密码" : ""
@@ -77,7 +93,7 @@ Item {
 
         function onLoginFailed(error) {
             root.loginPending = false
-            root.showNotice("登录失败，错误码：" + error, true)
+            root.showNotice(root.realtimeLoginErrorMessage(error), true)
         }
     }
 

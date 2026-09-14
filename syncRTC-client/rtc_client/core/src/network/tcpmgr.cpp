@@ -19,8 +19,10 @@ TcpMgr::TcpMgr(QObject *parent)
 
     // 处理错误
     QObject::connect(&m_socket, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::errorOccurred), [&](QAbstractSocket::SocketError socketError) {
-        Q_UNUSED(socketError)
-        qDebug() << "Error:" << m_socket.errorString();
+        qWarning() << "[TcpMgr] TCP error. host=" << m_host
+                   << "port=" << m_port
+                   << "socket_error=" << socketError
+                   << "message=" << m_socket.errorString();
     });
 
     // 连接建立
@@ -68,7 +70,8 @@ TcpMgr::TcpMgr(QObject *parent)
 
     // 连接断开
     QObject::connect(&m_socket, &QTcpSocket::disconnected, [&](){
-        qDebug() << "DISCONNECTED FROM SERVER";
+        qWarning() << "[TcpMgr] TCP disconnected. host=" << m_host
+                   << "port=" << m_port;
     });
 
     // 发送数据
@@ -114,6 +117,7 @@ void TcpMgr::initHandlers()
     m_handlers.insert(ID_MEDIA_ANSWER_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_MEDIA_CANDIDATE_RESPONSE, forwardJsonResponse);
     m_handlers.insert(ID_MEDIA_RENEGOTIATION_OFFER, forwardJsonResponse);
+    m_handlers.insert(ID_AI_ASK_RESPONSE, forwardJsonResponse);
 }
 
 void TcpMgr::handleMsg(RequestID id, int len, QByteArray data)

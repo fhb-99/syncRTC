@@ -160,6 +160,34 @@ class LoginControllerTest : public QObject
     Q_OBJECT
 
 private slots:
+    void wrongPasswordShowsSpecificReason()
+    {
+        LocalLoginServer gateServer;
+        QVERIFY(gateServer.listen());
+        gateServer.setResponse(QJsonObject{
+            {"error", static_cast<int>(ErrorCodes::ERROR_PASSWORD_INVALID)},
+        });
+
+        const GateServerUrlRestore restoreUrl;
+        GateServer_URL = QStringLiteral("http://127.0.0.1:%1").arg(gateServer.port());
+
+        ClientSession clientSession;
+        LoginController controller(&clientSession);
+        controller.setDeviceID(QStringLiteral("device-id"));
+        QObject::connect(HttpMgr::GetInstance().get(), &HttpMgr::signal_login_mod_finish,
+                         &controller, &LoginController::slot_login_mod_finish);
+        QSignalSpy loginFailedSpy(&controller, &LoginController::loginFailed);
+
+        controller.LoginRequest(QStringLiteral("alice@example.com"),
+                                QStringLiteral("WrongPass1"),
+                                false);
+
+        QTRY_VERIFY(gateServer.receivedRequest());
+        QTRY_COMPARE(loginFailedSpy.count(), 1);
+        QCOMPARE(loginFailedSpy.takeFirst().at(0).toString(),
+                 QStringLiteral("密码错误，请重新输入"));
+    }
+
     void passwordLoginWithRememberingSavesReturnedSession()
     {
 #ifndef Q_OS_WIN
