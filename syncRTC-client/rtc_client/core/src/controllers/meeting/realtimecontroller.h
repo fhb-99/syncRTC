@@ -25,10 +25,16 @@ public:
     ChatController *chatController() const { return m_chat.get(); }
     void setMediaController(QObject *mediaController);
 
+    // 会议内 AI 只提供普通文本问答，不携带音频或会议上下文。
+    Q_INVOKABLE void askAiQuestion(const QString &question);
+
 signals:
     // 个人资料处理完成后通知 QML 切换到会议主界面
     void profileReady();
     void loginFailed(int error);
+    void aiAnswerReceived(const QString &answer);
+    void aiRequestFailed(int error, const QString &message);
+    void aiRequestFinished();
 
 public slots:
     // 只接收 TcpMgr 回包，并根据 RequestID 分发给对应业务控制器

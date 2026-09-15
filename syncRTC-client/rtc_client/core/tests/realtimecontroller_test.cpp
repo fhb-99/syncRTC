@@ -1,4 +1,5 @@
 #include <QSignalSpy>
+#include <QJsonDocument>
 #include <QtTest>
 
 #include "../src/controllers/meeting/realtimecontroller.h"
@@ -46,6 +47,36 @@ private slots:
         QCOMPARE(currentUser.username(), QString());
         QCOMPARE(currentUser.email(), QString());
         QCOMPARE(profileReadySpy.count(), 0);
+    }
+
+    void aiQuestionSendsWithoutMeetingContextAndRoutesAnswer()
+    {
+        CurrentUserState currentUser;
+        RealtimeController realtimeController(&currentUser);
+        QSignalSpy sendSpy(TcpMgr::GetInstance(), &TcpMgr::signal_send_data);
+        QSignalSpy answerSpy(&realtimeController, &RealtimeController::aiAnswerReceived);
+        QSignalSpy finishedSpy(&realtimeController, &RealtimeController::aiRequestFinished);
+
+        realtimeController.askAiQuestion(QStringLiteral("项目的下一步是什么？"));
+
+        QCOMPARE(sendSpy.count(), 1);
+        const QList<QVariant> requestArguments = sendSpy.takeFirst();
+        QCOMPARE(requestArguments.at(0).toInt(), static_cast<int>(ID_AI_ASK_REQUEST));
+        const QJsonObject request = QJsonDocument::fromJson(
+            requestArguments.at(1).toByteArray()).object();
+        QCOMPARE(request.value(QStringLiteral("question")).toString(),
+                 QStringLiteral("项目的下一步是什么？"));
+        QVERIFY(!request.contains(QStringLiteral("meeting_id")));
+
+        realtimeController.slot_message_recv(ID_AI_ASK_RESPONSE, QJsonObject{
+            {"error", ErrorCodes::SUCCESS},
+            {"answer", "先确认接口契约，再做联调。"},
+        });
+
+        QCOMPARE(answerSpy.count(), 1);
+        QCOMPARE(answerSpy.takeFirst().at(0).toString(),
+                 QStringLiteral("先确认接口契约，再做联调。"));
+        QCOMPARE(finishedSpy.count(), 1);
     }
 
     void createMeetingResponseRefreshesRecentMeetings()

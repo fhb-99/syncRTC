@@ -3,8 +3,22 @@ name: SyncRTC CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'syncRTC-server/GateServer/**'
+      - 'syncRTC-server/RealtimeServer/**'
+      - 'syncRTC-server/MediaServer/**'
+      - 'syncRTC-server/db/**'
+      - 'tools/deploy/**'
+      - '.github/workflows/syncrtc-ci.yml'
   pull_request:
     branches: [develop, main]
+    paths:
+      - 'syncRTC-server/GateServer/**'
+      - 'syncRTC-server/RealtimeServer/**'
+      - 'syncRTC-server/MediaServer/**'
+      - 'syncRTC-server/db/**'
+      - 'tools/deploy/**'
+      - '.github/workflows/syncrtc-ci.yml'
   workflow_dispatch:
 
 permissions:

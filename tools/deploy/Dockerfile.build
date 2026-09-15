@@ -64,6 +64,33 @@ COPY . /opt/syncrtc/backend
 RUN install -D -m 0644 /opt/syncrtc/backend/.publisher/cmake/gRPCConfig.cmake \
         /usr/local/lib/cmake/gRPC/gRPCConfig.cmake
 
+# 生成文件必须和当前构建镜像中的 protobuf/gRPC 头文件保持同一版本。
+# 仓库中的生成文件可能来自其他开发环境，直接编译会使用不存在的回调 API。
+# 这里只在 RealtimeServer 构建时重新生成，GateServer 和 MediaServer 不受影响。
+RUN if [ "${SERVICE}" = "realtime" ]; then \
+        generated_dir=/tmp/meeting-ai-generated; \
+        mkdir -p "${generated_dir}"; \
+        protoc \
+            -I /opt/syncrtc/backend/syncRTC-server/AIServer/proto \
+            --cpp_out="${generated_dir}" \
+            --grpc_out="${generated_dir}" \
+            --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+            /opt/syncrtc/backend/syncRTC-server/AIServer/proto/meeting_ai.proto; \
+        sed -i \
+            -e 's|#include "meeting_ai.pb.h"|#include "common/meeting_ai.pb.h"|g' \
+            -e 's|#include "meeting_ai.grpc.pb.h"|#include "common/meeting_ai.grpc.pb.h"|g' \
+            "${generated_dir}/meeting_ai.pb.cc" \
+            "${generated_dir}/meeting_ai.grpc.pb.cc"; \
+        install -D -m 0644 "${generated_dir}/meeting_ai.pb.h" \
+            /opt/syncrtc/backend/syncRTC-server/RealtimeServer/include/common/meeting_ai.pb.h; \
+        install -D -m 0644 "${generated_dir}/meeting_ai.grpc.pb.h" \
+            /opt/syncrtc/backend/syncRTC-server/RealtimeServer/include/common/meeting_ai.grpc.pb.h; \
+        install -D -m 0644 "${generated_dir}/meeting_ai.pb.cc" \
+            /opt/syncrtc/backend/syncRTC-server/RealtimeServer/src/common/meeting_ai.pb.cc; \
+        install -D -m 0644 "${generated_dir}/meeting_ai.grpc.pb.cc" \
+            /opt/syncrtc/backend/syncRTC-server/RealtimeServer/src/common/meeting_ai.grpc.pb.cc; \
+    fi
+
 # 源码快照会排除所有真实 config.ini。RealtimeServer 和 MediaServer 的
 # CMake 构建后步骤要求配置文件存在，因此只在隔离的构建镜像内创建空文件；
 # 发布包仍然只导出 ELF，不会携带这个占位文件。
