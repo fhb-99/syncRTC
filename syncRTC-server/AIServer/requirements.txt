@@ -1,0 +1,5 @@
+# 本地运行依赖；不要把模型服务密钥写入此文件。
+grpcio
+protobuf
+requests
+python-dotenv

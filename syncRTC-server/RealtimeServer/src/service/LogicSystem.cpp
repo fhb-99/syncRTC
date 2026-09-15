@@ -3,8 +3,10 @@
 #include "storage/RedisMgr.h"
 #include "storage/MySqlMgr.h"
 #include "common/data.h"
+#include "config/ConfigMgr.h"
 
 #include <array>
+#include <chrono>
 #include <cerrno>
 #include <crypt.h>
 #include <algorithm>
@@ -26,6 +28,8 @@
 namespace {
 
 constexpr unsigned long kBcryptCost = 12;
+constexpr int kAiErrorEmptyQuestion = 1001;
+constexpr int kAiErrorRequestFailed = 2002;
 // 被动断线后给客户端的重连宽限时间。到期仍未重新入会，才真正移出会议成员列表。
 constexpr int kReconnectGraceSeconds = 45;
 // 以下两个 ID 只在服务端内部队列使用，不会通过 TCP 发送给客户端。
@@ -155,6 +159,14 @@ Json::Value MeetingMessageToJson(const MeetingMessageInfo& message,
 LogicSystem::LogicSystem()
     : m_stop(false)
 {
+    auto ai_config = ConfigMgr::Init()["AIService"];
+    const std::string ai_host = ai_config["Host"];
+    const std::string ai_port = ai_config["Port"];
+    if (!ai_host.empty() && !ai_port.empty()) {
+        m_ai_stub = message::MeetingAiService::NewStub(
+            grpc::CreateChannel(ai_host + ":" + ai_port, grpc::InsecureChannelCredentials()));
+    }
+
     initHandlers();
     work_thread = std::thread(&LogicSystem::DealMessage, this);
 }
@@ -359,6 +371,10 @@ void LogicSystem::initHandlers()
         LoginHandler(session, id, message);
     };
 
+    maps[ID_AI_ASK_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        AiAskHandler(session, id, message);
+    };
+
     // 处理客户端的创建会议请求
     maps[ID_CREATE_MEETING_REQUEST] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         CreateMeetingHandler(session, id, message);
@@ -421,6 +437,74 @@ void LogicSystem::initHandlers()
     maps[kReconnectTimeoutCheckEventId] = [this](std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         ReconnectTimeoutCheckHandler(session, id, message);
     };
+}
+
+
+void LogicSystem::AiAskHandler(std::shared_ptr<Session> session,
+                               std::uint16_t&, std::string& message)
+{
+    if (!session) {
+        return;
+    }
+
+    // 统一使用 Defer 回包，下面任意分支都只需要填写错误或答案。
+    Json::Value response;
+    Defer defer([session, &response]() {
+        session->Send(ID_AI_ASK_RESPONSE, response.toStyledString());
+    });
+
+    // 登录状态来自服务端 Session；普通问答不需要当前会议 ID。
+    if (session->GetUserId() <= 0) {
+        response["error"] = ErrorCodes::ERROR_TOKEN;
+        response["error_message"] = "请先登录后再提问。";
+        return;
+    }
+
+    Json::Reader reader;
+    Json::Value request_json;
+    if (!reader.parse(message, request_json) || !request_json.isObject() ||
+        !request_json["question"].isString()) {
+        response["error"] = ErrorCodes::ERROR_JSON;
+        response["error_message"] = "问题格式不正确。";
+        return;
+    }
+
+    const std::string question = request_json["question"].asString();
+    if (question.empty()) {
+        response["error"] = kAiErrorEmptyQuestion;
+        response["error_message"] = "问题不能为空。";
+        return;
+    }
+
+    if (!m_ai_stub) {
+        response["error"] = kAiErrorRequestFailed;
+        response["error_message"] = "AI 服务暂时不可用，请稍后再试。";
+        return;
+    }
+
+    // gRPC 请求只携带问题文本，RealtimeServer 不把会议状态传给 AIServer。
+    message::AskAssistantRequest ai_request;
+    ai_request.set_question(question);
+    message::AskAssistantResponse ai_response;
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(65));
+
+    // 当前先复用 LogicSystem 的同步处理方式，保持改动范围最小。
+    const grpc::Status status = m_ai_stub->AskAssistant(
+        &context, ai_request, &ai_response);
+    if (!status.ok()) {
+        response["error"] = kAiErrorRequestFailed;
+        response["error_message"] = "AI 服务暂时不可用，请稍后再试。";
+        return;
+    }
+
+    response["error"] = ai_response.error();
+    if (ai_response.error() == 0) {
+        response["answer"] = ai_response.answer();
+        return;
+    }
+
+    response["error_message"] = ai_response.error_message();
 }
 
 
