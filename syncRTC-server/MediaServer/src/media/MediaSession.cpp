@@ -49,6 +49,14 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
             return;
         }
 
+        // 判断 客户端和服务器的 Track 是否正常建立
+        std::cout << "[track-in-ready]"
+                  << " meeting=" << m_meeting_id
+                  << " publisher=" << m_uid
+                  << " media=" << media_type
+                  << " mid=" << track->description().mid()
+                  << std::endl;
+
         {
             std::lock_guard<std::mutex> lock(m_track_mutex);
             // 这里保存的是客户端发布给 MediaServer 的接收 Track。
@@ -60,15 +68,24 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
             }
         }
 
+        const std::uint64_t meeting_id = m_meeting_id;
         const int publisher_uid = m_uid;
         const MediaPacketCallback packet_callback = m_media_packet_callback;
         track->onMessage(
-            [publisher_uid, media_type, packet_callback](rtc::binary packet) {
+            [meeting_id, publisher_uid, media_type, packet_callback](rtc::binary packet) {
                 // Track 的二进制回调既可能收到 RTP，也可能收到 RTCP。
                 // 本阶段只做音视频 RTP 转发，质量反馈、丢包重传和关键帧请求后续再接入。
                 if (rtc::IsRtcp(packet)) {
                     return;
                 }
+
+                // 判断用户的RTC数据是否被服务器接收
+                std::cout << "[rtp-in]"
+                  << " meeting=" << meeting_id
+                  << " publisher=" << publisher_uid
+                  << " media=" << media_type
+                  << " bytes=" << packet.size()
+                  << std::endl;
 
                 // packet 仍是客户端完成编码、RTP 封装后的原始数据。
                 // MediaServer 不解码、不转码，只把发布者身份和媒体类型交给房间完成选路。
@@ -226,5 +243,16 @@ void MediaSession::ForwardRtp(int publisher_uid,
     // 多个客户端目前使用相同的采集端 SSRC。转发前改成房间为发布者分配的 SSRC，
     // 使接收端 SDP 中声明的 SSRC 与实际收到的 RTP 保持一致；序列号、时间戳和负载原样保留。
     rtp_header->setSsrc(outgoing_track.ssrc);
+
+    // 判断 数据是否正常转发至同一会议中的其他成员
+    std::cout << "[rtp-out]"
+          << " meeting=" << m_meeting_id
+          << " publisher=" << publisher_uid
+          << " subscriber=" << m_uid
+          << " media=" << media_type
+          << " out_ssrc=" << outgoing_track.ssrc
+          << " bytes=" << forwarded_packet.size()
+          << std::endl;
+
     outgoing_track.track->send(std::move(forwarded_packet));
 }
