@@ -3,6 +3,9 @@
 #include "common/Singleton.h"
 #include "common/global.h"
 #include "net/Session.h"
+#include "common/meeting_ai.grpc.pb.h"
+
+#include <grpcpp/grpcpp.h>
 
 #include <condition_variable>
 #include <functional>
@@ -53,6 +56,8 @@ private:
 
     // 客户端登录处理
     void LoginHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
+    // AI 只处理会议内普通文本问答，不读取音频，也不携带会议上下文。
+    void AiAskHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
 
     // 客户端创建会议处理
     void CreateMeetingHandler(std::shared_ptr<Session> session, std::uint16_t&, std::string& message);
@@ -94,4 +99,6 @@ private:
     // LogicSystem 单线程访问，仅保存本进程中已进入会议的连接用于生命周期通知。
     std::unordered_map<std::uint64_t, std::vector<std::weak_ptr<Session>>> m_meeting_sessions;
     std::uint64_t m_next_message_sequence = 0;
+    // RealtimeServer 只保存到 AIServer 的 gRPC Stub，模型 Key 留在 AIServer。
+    std::unique_ptr<message::MeetingAiService::Stub> m_ai_stub;
 };
