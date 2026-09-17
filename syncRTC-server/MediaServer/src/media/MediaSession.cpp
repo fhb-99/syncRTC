@@ -113,6 +113,22 @@ void MediaSession::SetRemoteOffer(std::string sdp, std::uint64_t signal_id)
 {
     m_signal_id = signal_id;
     m_remote_offer = std::move(sdp);
+
+    std::cout << "[remote-offer-check]"
+          << " meeting=" << m_meeting_id
+          << " uid=" << m_uid
+          << " signal_id=" << signal_id
+          << " sdp_bytes=" << m_remote_offer.size()
+          << " has_audio=" << (m_remote_offer.find("m=audio") != std::string::npos)
+          << " has_video=" << (m_remote_offer.find("m=video") != std::string::npos)
+          << " has_ice_ufrag="
+          << (m_remote_offer.find("a=ice-ufrag:") != std::string::npos)
+          << " has_ice_pwd="
+          << (m_remote_offer.find("a=ice-pwd:") != std::string::npos)
+          << " has_fingerprint="
+          << (m_remote_offer.find("a=fingerprint:") != std::string::npos)
+          << std::endl;
+
     // 先设置客户端 Offer，让 libdatachannel 根据其中的 audio/video m-line 创建接收 Track。
     m_peer_connection->setRemoteDescription(rtc::Description(m_remote_offer, "offer"));
 
