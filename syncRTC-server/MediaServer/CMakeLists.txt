@@ -91,10 +91,16 @@ add_custom_command(TARGET MediaServer POST_BUILD
 if(BUILD_TESTING)
     add_executable(media_room_test
         tests/MediaRoomTest.cpp
+        src/config/ConfigMgr.cpp
         src/media/MediaRoom.cpp
         src/media/MediaPeer.cpp
         src/media/MediaSession.cpp
     )
+    target_compile_definitions(media_room_test
+        PRIVATE
+            PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
     target_include_directories(media_room_test
         PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -103,6 +109,11 @@ if(BUILD_TESTING)
         PRIVATE
             $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    target_link_libraries(media_room_test PRIVATE LibDataChannel::LibDataChannel)
+    target_link_libraries(media_room_test
+        PRIVATE
+            Boost::filesystem
+            Boost::system
+            LibDataChannel::LibDataChannel
+    )
     add_test(NAME media_room_test COMMAND media_room_test)
 endif()
