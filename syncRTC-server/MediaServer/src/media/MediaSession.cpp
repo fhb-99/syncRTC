@@ -1,4 +1,5 @@
 #include "media/MediaSession.h"
+#include "config/ConfigMgr.h"
 
 #include <rtc/rtc.hpp>
 
@@ -17,10 +18,41 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
       m_track_ready_callback(std::move(track_ready_callback)),
       m_media_packet_callback(std::move(media_packet_callback))
 {
+    // 线上运行配置将 STUN/TURN 放在 [WebRTC] 段。每个 MediaSession 都会创建一条
+    // 独立 PeerConnection，因此必须在构造 PeerConnection 前把 ICE server 写入配置。
+    // 本地源码模板尚未填写这些键时保持原有行为，避免本地测试因空端口转换而启动失败。
+    SectionInfo webRtcConfig = ConfigMgr::Init()["WebRTC"];
+    const std::string stunHost = webRtcConfig["StunHost"];
+    const std::string stunPort = webRtcConfig["StunPort"];
+    const std::string turnHost = webRtcConfig["TurnHost"];
+    const std::string turnPort = webRtcConfig["TurnPort"];
+    const std::string turnUsername = webRtcConfig["TurnUsername"];
+    const std::string turnPassword = webRtcConfig["TurnPassword"];
+
     rtc::Configuration configuration;
     // 消费 Track 创建后需要通过后续的服务端 Offer 告知客户端。本阶段先关闭自动协商，
     // 避免 addTrack 立即生成一个 RealtimeServer 还不能转发的 Offer。
     configuration.disableAutoNegotiation = true;
+
+    // coturn 的 3478 端口同时提供 STUN 服务。配置后 libdatachannel 会在候选收集阶段
+    // 生成 srflx candidate，并沿现有 onLocalCandidate -> UDS -> RealtimeServer 链路发送。
+    if (!stunHost.empty() && !stunPort.empty()) {
+        configuration.iceServers.emplace_back(
+            stunHost, static_cast<uint16_t>(std::stoul(stunPort)));
+    }
+
+    // 当前线上安全组已放通 TURN UDP 控制端口和 UDP relay 范围，因此仅声明 TurnUdp。
+    // TURN 用户名和密码只从服务器运行配置读取，不进入 SDP、日志或客户端代码。
+    if (!turnHost.empty() && !turnPort.empty()
+        && !turnUsername.empty() && !turnPassword.empty()) {
+        configuration.iceServers.emplace_back(
+            turnHost,
+            static_cast<uint16_t>(std::stoul(turnPort)),
+            turnUsername,
+            turnPassword,
+            rtc::IceServer::RelayType::TurnUdp);
+    }
+
     m_peer_connection = std::make_shared<rtc::PeerConnection>(configuration);
 
     m_peer_connection->onLocalDescription([this](rtc::Description description) {
