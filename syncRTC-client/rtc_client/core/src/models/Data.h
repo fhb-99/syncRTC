@@ -120,5 +120,16 @@ struct RecentMeetingInfo
     std::string scheduled_at;      // 格式化后的预约开始时间
 };
 
+struct HistoryMeetingInfo
+{
+    std::string meeting_code;       // 用户复制或输入的会议号
+    std::string title;              // 会议标题
+    std::string creator_display_name; // 创建者名称
+    std::string creator_avatar_url;   // 创建者头像
+    std::string started_at;         // 会议正式开始时间，一般就是预约开始时间
+    std::string ended_at;           // 会议结束时间
+    // 会议记录，ai记录之类的，TODO
+};
+
 
 #endif // DATA_H

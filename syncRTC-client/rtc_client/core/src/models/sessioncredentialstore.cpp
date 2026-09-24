@@ -8,10 +8,16 @@
 #include <wincred.h>
 
 #include <string>
+#elif defined(Q_OS_ANDROID)
+#include <QJniObject>
 #endif
 
 namespace {
 constexpr auto kDefaultTargetName = "SyncRTC/rtc_client/last_session";
+
+#ifdef Q_OS_ANDROID
+constexpr auto kAndroidCredentialStoreClass = "org/qtproject/example/apprtc_client/SessionCredentialStore";
+#endif
 
 #ifdef Q_OS_WIN
 std::wstring toWideString(const QString &value)
@@ -56,6 +62,14 @@ bool SessionCredentialStore::save(const QString &account, const QString &session
     }
 
     return true;
+#elif defined(Q_OS_ANDROID)
+    const QJniObject targetName = QJniObject::fromString(m_targetName);
+    const QJniObject storedAccount = QJniObject::fromString(account);
+    const QJniObject storedToken = QJniObject::fromString(sessionToken);
+    // Android 端使用应用私有 SharedPreferences 保存本次勾选“记住登录状态”的凭据。
+    return QJniObject::callStaticMethod<jboolean>(
+        kAndroidCredentialStoreClass, "save", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+        targetName.object<jstring>(), storedAccount.object<jstring>(), storedToken.object<jstring>());
 #else
     Q_UNUSED(account)
     Q_UNUSED(sessionToken)
@@ -98,6 +112,23 @@ bool SessionCredentialStore::load(QString *account, QString *sessionToken) const
     *account = storedAccount;
     *sessionToken = storedToken;
     return true;
+#elif defined(Q_OS_ANDROID)
+    const QJniObject targetName = QJniObject::fromString(m_targetName);
+    const QJniObject storedAccount = QJniObject::callStaticObjectMethod(
+        kAndroidCredentialStoreClass, "loadAccount", "(Ljava/lang/String;)Ljava/lang/String;",
+        targetName.object<jstring>());
+    const QJniObject storedToken = QJniObject::callStaticObjectMethod(
+        kAndroidCredentialStoreClass, "loadSessionToken", "(Ljava/lang/String;)Ljava/lang/String;",
+        targetName.object<jstring>());
+    const QString savedAccount = storedAccount.toString();
+    const QString savedToken = storedToken.toString();
+    if (savedAccount.isEmpty() || savedToken.isEmpty()) {
+        return false;
+    }
+
+    *account = savedAccount;
+    *sessionToken = savedToken;
+    return true;
 #else
     return false;
 #endif
@@ -114,6 +145,11 @@ bool SessionCredentialStore::clear() const
             return false;
         }
     }
+#elif defined(Q_OS_ANDROID)
+    const QJniObject targetName = QJniObject::fromString(m_targetName);
+    return QJniObject::callStaticMethod<jboolean>(
+        kAndroidCredentialStoreClass, "clear", "(Ljava/lang/String;)Z",
+        targetName.object<jstring>());
 #endif
 
     return true;

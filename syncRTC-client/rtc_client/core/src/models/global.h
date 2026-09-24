@@ -109,6 +109,15 @@ private:
 
 inline QString GateServer_URL = "";
 
+// WebRTC ICE 服务配置在应用启动时从 config/config.ini 读取。MediaSession 在 RTC
+// 传输线程创建 PeerConnection 前只读取这些值，不在媒体线程中访问 QSettings。
+inline QString WebRtcStunHost = "";
+inline QString WebRtcStunPort = "";
+inline QString WebRtcTurnHost = "";
+inline QString WebRtcTurnPort = "";
+inline QString WebRtcTurnUsername = "";
+inline QString WebRtcTurnPassword = "";
+
 
 
 #endif // GLOBAL_H
