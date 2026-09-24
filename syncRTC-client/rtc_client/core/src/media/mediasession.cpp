@@ -1,4 +1,7 @@
 #include "mediasession.h"
+#include "../models/global.h"
+
+#include <qdebug.h>
 
 #if __has_include(<rtc/rtc.hpp>)
 #include <rtc/rtc.hpp>
@@ -13,22 +16,32 @@ MediaSession::MediaSession(QObject *parent)
 
 MediaSession::~MediaSession() = default;
 
-std::shared_ptr<rtc::Track> MediaSession::videoTrack() const
-{
-    return m_videoTrack;
-}
-
-std::shared_ptr<rtc::Track> MediaSession::audioTrack() const
-{
-    return m_audioTrack;
-}
-
 void MediaSession::startMediaSession(const QString &meetingId)
 {
     m_meetingId = meetingId;
 
     rtc::Configuration config;
     config.disableAutoNegotiation = true;
+
+    // STUN 用于让客户端在 NAT 后收集 srflx candidate。candidate 仍通过现有
+    // localCandidateReady -> TcpMgr -> RealtimeServer 控制链路发送给 MediaServer。
+    const quint16 stunPort = WebRtcStunPort.toUShort();
+    if (!WebRtcStunHost.isEmpty() && stunPort != 0) {
+        config.iceServers.emplace_back(WebRtcStunHost.toStdString(), stunPort);
+    }
+
+    // 当前云端 coturn 已开放 UDP 3478 与 UDP relay 端口范围。仅在运行配置提供完整
+    // TURN 凭据时才加入 TurnUdp，避免把空密码配置成无效 relay server。
+    const quint16 turnPort = WebRtcTurnPort.toUShort();
+    if (!WebRtcTurnHost.isEmpty() && turnPort != 0
+        && !WebRtcTurnUsername.isEmpty() && !WebRtcTurnPassword.isEmpty()) {
+        config.iceServers.emplace_back(
+            WebRtcTurnHost.toStdString(),
+            turnPort,
+            WebRtcTurnUsername.toStdString(),
+            WebRtcTurnPassword.toStdString(),
+            rtc::IceServer::RelayType::TurnUdp);
+    }
 
     m_peerConnection = std::make_shared<rtc::PeerConnection>(config);
 
@@ -40,6 +53,16 @@ void MediaSession::startMediaSession(const QString &meetingId)
             emit localAnswerReady(m_meetingId, sdp);
             return;
         }
+
+        qDebug() << "========== LOCAL DESCRIPTION ==========";
+        qDebug() << "type:"
+                 << QString::fromStdString(
+                        rtc::Description::typeToString(
+                            description.type()));
+
+        qDebug() << "pc address:"
+                 << static_cast<void*>(m_peerConnection.get());
+
         emit localOfferReady(m_meetingId, sdp);
     });
 
@@ -84,6 +107,7 @@ void MediaSession::startMediaSession(const QString &meetingId)
         // 否则对象释放会让该媒体线路停止接收，生成 Answer 时也可能将对应 m-line 标记为拒绝。
         std::lock_guard<std::mutex> lock(m_remoteTracksMutex);
         m_remoteTracks.push_back(std::move(track));
+        qDebug() << "远端音视频数据包已接受";
     });
 
     rtc::Description::Video video("video");
@@ -105,7 +129,7 @@ void MediaSession::startMediaSession(const QString &meetingId)
 
 void MediaSession::stopMediaSession()
 {
-    // 释放Track后MediaTransportMgr中的弱引用会自动失效，后续采集包不会再进入旧连接。
+    // Track 只由 RtcTransportWorker 访问；释放后，该线程中的 RTP 队列不会再写入旧连接。
     m_videoTrack.reset();
     m_audioTrack.reset();
     m_peerConnection.reset();
@@ -136,4 +160,24 @@ void MediaSession::addRemoteCandidate(const QString &candidate, const QString &m
     // ICE candidate 是对端的可连接地址；设置后 PeerConnection 会尝试打通网络路径。
     m_peerConnection->addRemoteCandidate(
         rtc::Candidate(candidate.toStdString(), mid.toStdString()));
+}
+
+void MediaSession::sendVideoRtp(const QByteArray &packet)
+{
+    if (packet.isEmpty() || !m_videoTrack || !m_videoTrack->isOpen()) {
+        return;
+    }
+
+    m_videoTrack->send(reinterpret_cast<const rtc::byte *>(packet.constData()),
+                       static_cast<size_t>(packet.size()));
+}
+
+void MediaSession::sendAudioRtp(const QByteArray &packet)
+{
+    if (packet.isEmpty() || !m_audioTrack || !m_audioTrack->isOpen()) {
+        return;
+    }
+
+    m_audioTrack->send(reinterpret_cast<const rtc::byte *>(packet.constData()),
+                       static_cast<size_t>(packet.size()));
 }

@@ -77,8 +77,8 @@ Window {
             onVerificationCodeRequested: function(email) {
                 authController.passwordResetController.GetVarifyCodeAsync(email)
             }
-            onResetPasswordRequested: function(email, code, password) {
-                authController.passwordResetController.ReSetPassword("", email, code, password)
+            onResetPasswordRequested: function(email, code, password, confirm) {
+                authController.passwordResetController.ReSetPassword(email, code, password, confirm)
             }
             onResetFinished: stackView.pop()
             onLoginRequested: stackView.pop()

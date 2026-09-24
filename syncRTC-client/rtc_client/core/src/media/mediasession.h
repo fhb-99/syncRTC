@@ -27,8 +27,8 @@ public:
     void setRemoteDescription(const QString &sdp, const QString &type);
     void setRemoteOffer(const QString &sdp);
     void addRemoteCandidate(const QString &candidate, const QString &mid);
-    std::shared_ptr<rtc::Track> videoTrack() const;
-    std::shared_ptr<rtc::Track> audioTrack() const;
+    void sendVideoRtp(const QByteArray &packet);
+    void sendAudioRtp(const QByteArray &packet);
 
 signals:
     // offer/candidate 仍走现有 RealtimeServer 控制链路，不由传输类直接发送。

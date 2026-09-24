@@ -28,9 +28,21 @@ bool MediaDeviceCapture::startCamera()
         return true;
     }
 
-    const QCameraDevice device = QMediaDevices::defaultVideoInput();
+    QCameraDevice device;
+#ifdef Q_OS_ANDROID
+    // Android 会议采集固定使用后置摄像头，不回退到前置摄像头。
+    const auto videoInputs = QMediaDevices::videoInputs();
+    for (const QCameraDevice &candidate : videoInputs) {
+        if (candidate.position() == QCameraDevice::BackFace) {
+            device = candidate;
+            break;
+        }
+    }
+#else
+    device = QMediaDevices::defaultVideoInput();
+#endif
     if (device.isNull()) {
-        qWarning() << "No camera device available";
+        qWarning() << "No rear camera device available";
         return false;
     }
 
@@ -89,8 +101,9 @@ bool MediaDeviceCapture::startMicrophone()
         return false;
     }
 
-    // readyRead 每次拿到的数据长度不固定，先把PCM交给 MediaStreamProcessor。
-    // 处理器会按20ms切片，再完成Opus编码、RTP封装并写入WebRTC音频Track。
+    // readyRead 每次拿到的数据长度不固定，先把 PCM 交给 MediaController。
+    // 后续 AudioEncodeWorker 会在独立线程中按 20ms 切片，完成 Opus 编码和 RTP 封装；
+    // 完成的 RTP 包再交给专用 RTC 传输线程写入音频 Track，采集回调不直接触碰网络对象。
     connect(m_audioDevice, &QIODevice::readyRead, this, [this]() {
         if (m_audioDevice) {
             // readAll() 读到的是麦克风采集出的 PCM 原始音频数据，还没有经过压缩编码。

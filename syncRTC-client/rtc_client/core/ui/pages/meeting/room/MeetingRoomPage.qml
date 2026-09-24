@@ -14,8 +14,6 @@ Item {
     property var members: []
     property var chatController: null
     property var mediaController: null
-    property bool microphoneMuted: false
-    property bool cameraEnabled: true
     property bool sharingEnabled: false
     // 右侧抽屉只在拿到对应的真实会中数据后展示，避免进入会议时显示演示内容。
     property string sidePanelMode: ""
@@ -37,12 +35,18 @@ Item {
     readonly property bool isScheduled: status === "scheduled"
     readonly property bool isInProgress: status === "in_progress"
     readonly property bool isEnded: status === "ended"
+    // 设备状态以 MediaController 为准，入会时摄像头和麦克风默认关闭。
+    readonly property bool microphoneEnabled: mediaController
+                                                ? mediaController.microphoneEnabled : false
+    readonly property bool cameraEnabled: mediaController
+                                           ? mediaController.cameraEnabled : false
     readonly property bool localVideoAvailable: mediaController
-                                                ? mediaController.localVideoAvailable : false
+                                                 ? mediaController.localVideoAvailable : false
 
     signal startMeetingRequested(string meetingId)
     signal endMeetingRequested(string meetingId)
     signal leaveRequested()
+    signal returnRequested()
     signal openMicrophoneRequested()
     signal closeMicrophoneRequested()
     signal openCameraRequested(string meetingId)
@@ -97,23 +101,21 @@ Item {
         root.endMeetingRequested(root.meetingId)
     }
 
-    function setMicrophoneMuted(muted) {
-        if (root.microphoneMuted === muted)
+    function setMicrophoneEnabled(enabled) {
+        if (root.microphoneEnabled === enabled)
             return
 
-        root.microphoneMuted = muted
         // QML 只发出用户意图，真实设备开关由 MediaController 接收信号后处理。
-        if (muted)
-            root.closeMicrophoneRequested()
-        else
+        if (enabled)
             root.openMicrophoneRequested()
+        else
+            root.closeMicrophoneRequested()
     }
 
     function setCameraEnabled(enabled) {
         if (root.cameraEnabled === enabled)
             return
 
-        root.cameraEnabled = enabled
         if (enabled)
             root.openCameraRequested(root.meetingId)
         else
@@ -274,7 +276,6 @@ Item {
             memberModel.append({
                 "userId": userId,
                 "name": memberName,
-                "color": "#2563eb",
                 "muted": false,
                 "roomState": member && typeof member === "object" && member.room_state === "reconnecting"
                              ? "reconnecting" : "active",
@@ -354,9 +355,9 @@ Item {
 
         implicitWidth: 76
         implicitHeight: 58
-        radius: 14
-        color: selected ? "#2563eb" : controlMouse.containsMouse ? "#eff6ff" : "#f8fafc"
-        border.color: selected ? "#2563eb" : "#dbe3ef"
+        radius: 16
+        color: selected ? "#e8f0ff" : controlMouse.containsMouse ? "#f1f5f9" : "#ffffff"
+        border.color: selected ? "#bfdbfe" : "#dce3ed"
 
         Column {
             anchors.centerIn: parent
@@ -365,7 +366,7 @@ Item {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: controlButtonRoot.iconText
-                color: controlButtonRoot.selected ? "#ffffff" : "#2563eb"
+                color: controlButtonRoot.selected ? "#1d4ed8" : "#475569"
                 font.pixelSize: 17
                 font.bold: true
             }
@@ -373,7 +374,7 @@ Item {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: controlButtonRoot.label
-                color: controlButtonRoot.selected ? "#ffffff" : "#2563eb"
+                color: controlButtonRoot.selected ? "#1d4ed8" : "#475569"
                 font.pixelSize: 12
                 font.bold: true
             }
@@ -435,18 +436,21 @@ Item {
     }
 
     Rectangle {
+        objectName: "meetingBackground"
         anchors.fill: parent
-        color: "#07111f"
+        color: "#f5f7fb"
     }
 
     Rectangle {
         id: topBar
 
+        objectName: "meetingTopBar"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         height: 74
-        color: "#111c2f"
+        color: "#ffffff"
+        border.color: "#e5eaf2"
 
         RowLayout {
             anchors.fill: parent
@@ -456,8 +460,8 @@ Item {
 
             Text {
                 text: root.roomTitle()
-                color: "#f8fafc"
-                font.pixelSize: 23
+                color: "#172033"
+                font.pixelSize: 22
                 font.bold: true
             }
 
@@ -465,12 +469,12 @@ Item {
                 Layout.preferredWidth: 170
                 Layout.preferredHeight: 34
                 radius: 17
-                color: "#1e3a8a"
+                color: "#eef2ff"
 
                 Text {
                     anchors.centerIn: parent
                     text: "会议号  " + root.meetingCode
-                    color: "#dbeafe"
+                    color: "#3730a3"
                     font.pixelSize: 14
                     font.bold: true
                 }
@@ -480,14 +484,14 @@ Item {
                 Layout.preferredWidth: roleBadgeText.implicitWidth + 28
                 Layout.preferredHeight: 34
                 radius: 17
-                color: root.isHost ? "#7c3aed" : "#334155"
+                color: root.isHost ? "#f3e8ff" : "#f1f5f9"
 
                 Text {
                     id: roleBadgeText
 
                     anchors.centerIn: parent
                     text: root.roleText()
-                    color: "#ffffff"
+                    color: root.isHost ? "#7e22ce" : "#475569"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -497,14 +501,14 @@ Item {
                 Layout.preferredWidth: statusBadgeText.implicitWidth + 28
                 Layout.preferredHeight: 34
                 radius: 17
-                color: root.isInProgress ? "#15803d" : root.isEnded ? "#475569" : "#ca8a04"
+                color: root.isInProgress ? "#dcfce7" : root.isEnded ? "#f1f5f9" : "#fef3c7"
 
                 Text {
                     id: statusBadgeText
 
                     anchors.centerIn: parent
                     text: root.statusText()
-                    color: "#ffffff"
+                    color: root.isInProgress ? "#15803d" : root.isEnded ? "#475569" : "#a16207"
                     font.pixelSize: 13
                     font.bold: true
                 }
@@ -516,7 +520,7 @@ Item {
                 text: root.isInProgress
                       ? (root.hasRealtimeMeetingData ? "网络状态已同步" : "网络状态待接入")
                       : "聊天可用"
-                color: "#93c5fd"
+                color: root.hasRealtimeMeetingData ? "#2563eb" : "#64748b"
                 font.pixelSize: 13
             }
         }
@@ -546,8 +550,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 420
-                radius: 18
-                color: "#1d2a3d"
+                color: "#f5f7fb"
                 clip: true
                 objectName: "meetingStage"
 
@@ -556,7 +559,6 @@ Item {
 
                     objectName: "meetingParticipantGrid"
                     anchors.fill: parent
-                    anchors.margins: 8
                     model: memberModel
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
@@ -579,7 +581,6 @@ Item {
 
                         required property string userId
                         required property string name
-                        required property color color
                         required property bool muted
                         required property string roomState
                         required property bool isSelf
@@ -619,11 +620,13 @@ Item {
                         }
 
                         Rectangle {
+                            objectName: "meetingMemberTile_" + memberTile.userId
                             anchors.fill: parent
-                            anchors.margins: 5
-                            radius: 14
-                            color: memberTile.roomState === "reconnecting"
-                                   ? "#64748b" : memberTile.color
+                            anchors.margins: 7
+                            radius: 16
+                            color: "#eef2f7"
+                            border.color: memberTile.roomState === "reconnecting"
+                                          ? "#94a3b8" : "#dce3ed"
                             clip: true
 
                             VideoOutput {
@@ -638,11 +641,12 @@ Item {
                             }
 
                             Rectangle {
-                                width: Math.min(84, Math.max(54, parent.height * 0.25))
+                                objectName: "meetingMemberAvatar_" + memberTile.userId
+                                width: Math.min(72, Math.max(48, parent.height * 0.18))
                                 height: width
                                 radius: width / 2
                                 anchors.centerIn: parent
-                                color: memberTile.isSelf ? "#2563eb" : "#94a3b8"
+                                color: memberTile.isSelf ? "#4f46e5" : "#64748b"
                                 visible: !memberTile.videoAvailable || root.isEnded
 
                                 Text {
@@ -655,15 +659,28 @@ Item {
                             }
 
                             Rectangle {
+                                id: memberNameBadge
+
+                                objectName: "meetingMemberNameBadge_" + memberTile.userId
                                 anchors.left: parent.left
-                                anchors.right: parent.right
                                 anchors.bottom: parent.bottom
-                                anchors.margins: 12
-                                height: 28
-                                radius: 14
-                                color: "#101a2d"
+                                anchors.leftMargin: 14
+                                anchors.bottomMargin: 14
+                                width: Math.min(parent.width - 28,
+                                                Math.max(84,
+                                                         memberNameText.implicitWidth
+                                                         + (mutedLabel.visible
+                                                            ? mutedLabel.implicitWidth + 10 : 0)
+                                                         + 28))
+                                height: 30
+                                radius: 10
+                                color: memberTile.videoAvailable
+                                       ? Qt.rgba(0.06, 0.09, 0.16, 0.82) : "#ffffff"
+                                border.color: memberTile.videoAvailable ? "transparent" : "#d7dee8"
 
                                 Text {
+                                    id: memberNameText
+
                                     anchors.verticalCenter: parent.verticalCenter
                                     anchors.left: parent.left
                                     anchors.leftMargin: 12
@@ -672,8 +689,9 @@ Item {
                                     text: memberTile.roomState === "reconnecting"
                                           ? memberTile.name + " · 重连中"
                                           : memberTile.name
-                                    color: "#ffffff"
+                                    color: memberTile.videoAvailable ? "#ffffff" : "#334155"
                                     font.pixelSize: 12
+                                    font.bold: true
                                     elide: Text.ElideRight
                                 }
 
@@ -685,7 +703,7 @@ Item {
                                     anchors.right: parent.right
                                     anchors.rightMargin: 12
                                     text: "静音"
-                                    color: "#fca5a5"
+                                    color: memberTile.videoAvailable ? "#fca5a5" : "#dc2626"
                                     font.pixelSize: 11
                                 }
                             }
@@ -699,31 +717,6 @@ Item {
                     text: "等待成员实时数据同步"
                     color: "#94a3b8"
                     font.pixelSize: 14
-                }
-
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 32
-                    width: Math.min(parent.width - 80, liveCaption.implicitWidth + 48)
-                    height: 52
-                    radius: 14
-                    color: "#020617"
-                    opacity: 0.94
-
-                    Text {
-                        id: liveCaption
-
-                        objectName: "meetingLiveCaption"
-                        anchors.centerIn: parent
-                        width: parent.width - 32
-                        text: root.isInProgress && root.hasRealtimeMeetingData ? "实时字幕已同步" : "实时字幕暂未接入"
-                        color: "#ffffff"
-                        font.pixelSize: 17
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                    }
                 }
 
                 Rectangle {
@@ -1604,16 +1597,18 @@ Item {
         spacing: 12
 
         ControlButton {
+            objectName: "meetingMicrophoneControl"
             visible: root.isInProgress
-            label: root.microphoneMuted ? "取消静音" : "静音"
-            iconText: root.microphoneMuted ? "◌" : "●"
-            selected: root.microphoneMuted
-            onTriggered: root.setMicrophoneMuted(!root.microphoneMuted)
+            label: root.microphoneEnabled ? "静音" : "开麦克风"
+            iconText: root.microphoneEnabled ? "●" : "◌"
+            selected: root.microphoneEnabled
+            onTriggered: root.setMicrophoneEnabled(!root.microphoneEnabled)
         }
 
         ControlButton {
+            objectName: "meetingCameraControl"
             visible: root.isInProgress
-            label: root.cameraEnabled ? "视频" : "开视频"
+            label: root.cameraEnabled ? "关视频" : "开视频"
             iconText: root.cameraEnabled ? "▣" : "□"
             selected: root.cameraEnabled
             onTriggered: root.setCameraEnabled(!root.cameraEnabled)
@@ -1701,10 +1696,16 @@ Item {
             MouseArea {
                 id: leaveMouse
 
+                objectName: "meetingLeaveButton"
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.leaveRequested()
+                onClicked: {
+                    if (root.isEnded)
+                        root.returnRequested()
+                    else
+                        root.leaveRequested()
+                }
             }
         }
     }
