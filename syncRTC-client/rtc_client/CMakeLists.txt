@@ -51,6 +51,12 @@ qt_add_executable(apprtc_client
     core/src/main.cpp
 )
 
+if(ANDROID)
+    # Android 登录凭据辅助类随 APK 打包，不能放在每次构建都会重建的 android-build 目录。
+    set_property(TARGET apprtc_client PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
+                 "${CMAKE_CURRENT_SOURCE_DIR}/android")
+endif()
+
 qt_add_resources(apprtc_client "client_assets"
     PREFIX "/"
     BASE core
@@ -111,11 +117,12 @@ qt_add_qml_module(apprtc_client
         SOURCES core/src/media/mediacontroller.h core/src/media/mediacontroller.cpp
         SOURCES core/src/media/mediasession.h core/src/media/mediasession.cpp
         SOURCES core/src/media/mediadevicecapture.h core/src/media/mediadevicecapture.cpp
-        SOURCES core/src/media/mediastreamprocessor.h core/src/media/mediastreamprocessor.cpp
+        SOURCES core/src/media/audioencodeworker.h core/src/media/audioencodeworker.cpp
+        SOURCES core/src/media/videoencodeworker.h core/src/media/videoencodeworker.cpp
+        SOURCES core/src/media/rtctransportworker.h core/src/media/rtctransportworker.cpp
         SOURCES core/src/media/receive/remotemediareceiver.h core/src/media/receive/remotemediareceiver.cpp
         SOURCES core/src/media/receive/videoreceivepipeline.h core/src/media/receive/videoreceivepipeline.cpp
         SOURCES core/src/media/receive/audioreceivepipeline.h core/src/media/receive/audioreceivepipeline.cpp
-        SOURCES core/src/network/mediatransportmgr.h core/src/network/mediatransportmgr.cpp
         SOURCES core/src/media/receive/avsyncscheduler.h core/src/media/receive/avsyncscheduler.cpp
         SOURCES core/src/media/render/remotevideorenderer.h core/src/media/render/remotevideorenderer.cpp
 )

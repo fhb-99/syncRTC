@@ -545,6 +545,8 @@ Item {
         onEndMeetingRequested: function(meetingId) {
             root.requestEndMeeting(meetingId)
         }
+        // 会议已结束时，返回主界面只清理本地会议页面状态，不再请求服务端离会。
+        onReturnRequested: root.leaveMeeting()
         onLeaveRequested: root.requestLeaveMeeting(root.activeMeetingId)
     }
 }

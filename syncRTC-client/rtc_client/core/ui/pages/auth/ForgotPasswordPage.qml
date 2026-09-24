@@ -9,7 +9,7 @@ Item {
     signal backRequested()
     signal resetFinished()
     signal verificationCodeRequested(string email)
-    signal resetPasswordRequested(string email, string code, string password)
+    signal resetPasswordRequested(string email, string code, string password, string confirm)
     signal loginRequested()
 
     property string emailError: ""

@@ -162,5 +162,4 @@ void TcpMgr::slot_send_data(RequestID reqID, QByteArray data)
 
     // 发送数据，write是异步发送
     m_socket.write(target);
-    qDebug() << "TcpMgr is Sending data";
 }

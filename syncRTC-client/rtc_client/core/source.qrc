@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>asserts/crossed-eye.svg</file>
+        <file>asserts/eye.svg</file>
+    </qresource>
+</RCC>

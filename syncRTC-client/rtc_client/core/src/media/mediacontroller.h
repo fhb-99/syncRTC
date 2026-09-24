@@ -13,8 +13,10 @@ class QVideoSink;
 class MediaDeviceCapture;
 class RemoteMediaReceiver;
 class RemoteVideoRenderer;
-class MediaSession;
-class MediaStreamProcessor;
+class AudioEncodeWorker;
+class VideoEncodeWorker;
+class RtcTransportWorker;
+class QThread;
 
 class MediaController : public QObject
 {
@@ -60,14 +62,20 @@ private:
     void slotLocalCandidateReady(const QString &meetingId, const QString &candidate,
                                  const QString &mid);
     void slotRemoteVideoEncodedFrameReady(int publisherUid, const QByteArray &frame,
-                                          quint32 rtpTimestamp);
+                                           quint32 rtpTimestamp);
     void slotRemoteAudioEncodedFrameReady(int publisherUid, const QByteArray &frame,
-                                          quint32 rtpTimestamp);
+                                           quint32 rtpTimestamp);
+    void slotAudioPcmDataCaptured(const QByteArray &pcmData);
+    void slotVideoFrameCaptured(const QVideoFrame &frame);
     RemoteMediaReceiver *receiverFor(int publisherUid);
 
     std::unique_ptr<MediaDeviceCapture> m_deviceCapture;
-    std::unique_ptr<MediaSession> m_mediaSession;
-    std::unique_ptr<MediaStreamProcessor> m_streamProcessor;
+    std::unique_ptr<QThread> m_rtcTransportThread;
+    RtcTransportWorker *m_rtcTransportWorker = nullptr;
+    std::unique_ptr<QThread> m_audioEncodeThread;
+    AudioEncodeWorker *m_audioEncodeWorker = nullptr;
+    std::unique_ptr<QThread> m_videoEncodeThread;
+    VideoEncodeWorker *m_videoEncodeWorker = nullptr;
     std::unique_ptr<RemoteVideoRenderer> m_videoRenderer;
     std::unordered_map<int, std::unique_ptr<RemoteMediaReceiver>> m_remoteReceivers;
     bool m_cameraEnabled = false;

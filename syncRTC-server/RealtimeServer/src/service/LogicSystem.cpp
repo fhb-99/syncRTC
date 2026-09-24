@@ -1305,6 +1305,14 @@ void LogicSystem::LeaveMeetingHandler(std::shared_ptr<Session> session, std::uin
         return;
     }
     if (session->GetMeetingId() != meeting_id) {
+        MeetingInfo meeting_info;
+        if (MysqlMgr::GetInstance()->GetMeetingInfoById(meeting_id, meeting_info) &&
+            meeting_info.status == MeetingStatus::kEnded) {
+            // 结束会议会先清空会话中的 meeting_id，兼容旧客户端随后发出的离会请求。
+            value["error"] = ErrorCodes::SUCCESS;
+            value["meeting_id"] = std::to_string(meeting_id);
+            return;
+        }
         value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
         return;
     }

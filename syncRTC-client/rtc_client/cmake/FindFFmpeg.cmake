@@ -11,6 +11,8 @@ if(WIN32 AND EXISTS "E:/ffmpeg-5.1.6/ffmpeg-n5.1.6-9-gdcdfd7fb62-win64-gpl-share
 endif()
 
 set(FFMPEG_ROOT "" CACHE PATH "FFmpeg development package root")
+set(FFMPEG_EXTRA_LIBRARIES "" CACHE STRING
+    "Additional static libraries required by the selected FFmpeg build")
 
 find_path(FFMPEG_INCLUDE_DIR
     NAMES libavcodec/avcodec.h
@@ -62,7 +64,7 @@ if(FFmpeg_FOUND)
     if(NOT TARGET FFmpeg::FFmpeg)
         add_library(FFmpeg::FFmpeg INTERFACE IMPORTED)
         set_target_properties(FFmpeg::FFmpeg PROPERTIES
-            INTERFACE_LINK_LIBRARIES "${_FFMPEG_COMPONENT_TARGETS}"
+            INTERFACE_LINK_LIBRARIES "${_FFMPEG_COMPONENT_TARGETS};${FFMPEG_EXTRA_LIBRARIES}"
             INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}"
         )
     endif()
