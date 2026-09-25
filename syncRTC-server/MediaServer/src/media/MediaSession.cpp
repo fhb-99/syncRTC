@@ -3,6 +3,8 @@
 
 #include <rtc/rtc.hpp>
 
+#include <atomic>
+#include <iostream>
 #include <mutex>
 #include <utility>
 
@@ -275,6 +277,18 @@ void MediaSession::ForwardRtp(int publisher_uid,
                                           : m_outgoing_audio_tracks;
         const auto track_it = outgoing_tracks.find(publisher_uid);
         if (track_it == outgoing_tracks.end()) {
+            static std::atomic<std::uint64_t> dropped{0};
+            const std::uint64_t count = ++dropped;
+            if (count == 1 || count % 300 == 0) {
+                std::cout << "[rtp-forward-skip]"
+                          << " reason=no-outgoing-track"
+                          << " meeting=" << m_meeting_id
+                          << " publisher=" << publisher_uid
+                          << " subscriber=" << m_uid
+                          << " media=" << media_type
+                          << " dropped=" << count
+                          << std::endl;
+            }
             return;
         }
         outgoing_track = track_it->second;
@@ -283,6 +297,18 @@ void MediaSession::ForwardRtp(int publisher_uid,
     // 新增消费 Track 在完成后续 Offer/Answer 前不会 Open，此时跳过发送即可。
     // 协商完成后，相同的转发路径会直接开始写 RTP，无需再修改房间转发逻辑。
     if (!outgoing_track.track->isOpen()) {
+        static std::atomic<std::uint64_t> dropped{0};
+        const std::uint64_t count = ++dropped;
+        if (count == 1 || count % 300 == 0) {
+            std::cout << "[rtp-forward-skip]"
+                      << " reason=outgoing-track-not-open"
+                      << " meeting=" << m_meeting_id
+                      << " publisher=" << publisher_uid
+                      << " subscriber=" << m_uid
+                      << " media=" << media_type
+                      << " dropped=" << count
+                      << std::endl;
+        }
         return;
     }
 
