@@ -113,13 +113,18 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
                     return;
                 }
 
-                // 判断用户的RTC数据是否被服务器接收
-                std::cout << "[rtp-in]"
-                  << " meeting=" << meeting_id
-                  << " publisher=" << publisher_uid
-                  << " media=" << media_type
-                  << " bytes=" << packet.size()
-                  << std::endl;
+                // RTP 到包频率很高，只输出首包和每 300 包的采样日志，避免淹没转发异常。
+                static std::atomic<std::uint64_t> received{0};
+                const std::uint64_t count = ++received;
+                if (count == 1 || count % 300 == 0) {
+                    std::cout << "[rtp-in]"
+                              << " meeting=" << meeting_id
+                              << " publisher=" << publisher_uid
+                              << " media=" << media_type
+                              << " bytes=" << packet.size()
+                              << " received=" << count
+                              << std::endl;
+                }
 
                 // packet 仍是客户端完成编码、RTP 封装后的原始数据。
                 // MediaServer 不解码、不转码，只把发布者身份和媒体类型交给房间完成选路。
