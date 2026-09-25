@@ -3,6 +3,8 @@
 #include "media/MediaPeer.h"
 #include "media/MediaSession.h"
 
+#include <atomic>
+#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -154,6 +156,21 @@ void MediaRoom::ForwardRtp(int publisher_uid,
             }
             target_sessions.push_back(target_peer->GetSession());
         }
+    }
+
+    if (target_sessions.empty()) {
+        static std::atomic<std::uint64_t> dropped{0};
+        const std::uint64_t count = ++dropped;
+        if (count == 1 || count % 300 == 0) {
+            std::cout << "[rtp-forward-skip]"
+                      << " reason=no-target-session"
+                      << " meeting=" << m_meeting_id
+                      << " publisher=" << publisher_uid
+                      << " media=" << media_type
+                      << " dropped=" << count
+                      << std::endl;
+        }
+        return;
     }
 
     // 同一份发布者 RTP 依次交给会议中的其他成员。MediaSession 会复制数据包、
