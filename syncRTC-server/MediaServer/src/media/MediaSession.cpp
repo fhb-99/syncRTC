@@ -58,12 +58,22 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
     m_peer_connection = std::make_shared<rtc::PeerConnection>(configuration);
 
     m_peer_connection->onLocalDescription([this](rtc::Description description) {
+        const std::string type = description.typeString();
+        const std::string sdp = std::string(description);
+        std::cout << "[media-local-sdp]"
+                  << " meeting=" << m_meeting_id
+                  << " uid=" << m_uid
+                  << " signal_id=" << m_signal_id
+                  << " type=" << type
+                  << " sdp_bytes=" << sdp.size()
+                  << std::endl;
+
         MediaSignalResponse response;
         response.signal_id = m_signal_id;
         response.meeting_id = m_meeting_id;
         response.uid = m_uid;
-        response.signal_type = description.typeString();
-        response.sdp = std::string(description);
+        response.signal_type = type;
+        response.sdp = sdp;
         m_signal_callback(response);
     });
     m_peer_connection->onLocalCandidate([this](rtc::Candidate candidate) {
