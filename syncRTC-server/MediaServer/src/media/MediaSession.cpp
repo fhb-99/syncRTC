@@ -243,7 +243,9 @@ void MediaSession::AddOutgoingTrack(int publisher_uid,
         return;
     }
 
-    const std::string mid = media_type + "-" + std::to_string(publisher_uid);
+    // 同一用户重新入会时会创建新的 Track；SSRC 让 MID 保持唯一，末尾 uid 仍供客户端识别发布者。
+    const std::string mid = media_type + "-" + std::to_string(ssrc) + "-" +
+                            std::to_string(publisher_uid);
     std::shared_ptr<rtc::Track> track;
     if (media_type == "video") {
         rtc::Description::Video video(mid, rtc::Description::Direction::SendOnly);
@@ -260,6 +262,13 @@ void MediaSession::AddOutgoingTrack(int publisher_uid,
     // publisher_uid 表示这条消费 Track 属于哪位发布者；同一接收者会为每位其他成员
     // 分别保存一对 audio/video Track，后续客户端才能按 MID 区分不同参会者。
     outgoing_tracks.emplace(publisher_uid, OutgoingTrack{std::move(track), ssrc});
+}
+
+void MediaSession::RemoveOutgoingTracks(int publisher_uid)
+{
+    std::lock_guard<std::mutex> lock(m_track_mutex);
+    m_outgoing_video_tracks.erase(publisher_uid);
+    m_outgoing_audio_tracks.erase(publisher_uid);
 }
 
 void MediaSession::RequestRenegotiation()

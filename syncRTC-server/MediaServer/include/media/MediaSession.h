@@ -32,6 +32,7 @@ public:
     void SetRemoteAnswer(std::string sdp);
     void AddRemoteCandidate(std::string candidate, std::string mid);
     void AddOutgoingTrack(int publisher_uid, const std::string& media_type, std::uint32_t ssrc);
+    void RemoveOutgoingTracks(int publisher_uid);
     void RequestRenegotiation();
     void ForwardRtp(int publisher_uid, const std::string& media_type, const rtc::binary& packet);
 
