@@ -54,7 +54,7 @@ void LogicSystem::DealMessage()
             m_msg_que.pop();
         }
 
-        // m_rooms 只在这个线程读写，offer、answer、candidate 会按 UDS 到达顺序串行处理。
+        // m_rooms 只在这个线程读写，媒体信令和离会清理会按 UDS 到达顺序串行处理。
         HandleSignal(message->session, std::move(message->message));
     }
 }
@@ -88,6 +88,10 @@ void LogicSystem::HandleSignal(std::shared_ptr<Session> session, std::string mes
         request.candidate = root["candidate"].asString();
         request.mid = root["mid"].asString();
         HandleCandidate(std::move(session), request);
+        return;
+    }
+    if (request.signal_type == "leave") {
+        HandleLeave(request);
     }
 }
 
@@ -183,4 +187,17 @@ void LogicSystem::HandleCandidate(std::shared_ptr<Session>, const MediaSignalReq
         return;
     }
     peer->GetSession()->AddRemoteCandidate(request.candidate, request.mid);
+}
+
+void LogicSystem::HandleLeave(const MediaSignalRequest& request)
+{
+    const auto room_it = m_rooms.find(request.meeting_id);
+    if (room_it == m_rooms.end()) {
+        return;
+    }
+
+    room_it->second->RemovePeer(request.uid);
+    if (room_it->second->PeerCount() == 0) {
+        m_rooms.erase(room_it);
+    }
 }
