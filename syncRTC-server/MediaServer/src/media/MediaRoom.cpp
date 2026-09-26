@@ -44,10 +44,24 @@ void MediaRoom::AddPeer(std::shared_ptr<MediaPeer> peer)
 
 void MediaRoom::RemovePeer(int uid)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_peers.erase(uid);
-    m_video_publishers.erase(uid);
-    m_audio_publishers.erase(uid);
+    std::vector<std::shared_ptr<MediaSession>> remaining_sessions;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_peers.erase(uid);
+        m_video_publishers.erase(uid);
+        m_audio_publishers.erase(uid);
+
+        for (const auto& item : m_peers) {
+            if (item.second->GetSession()) {
+                remaining_sessions.push_back(item.second->GetSession());
+            }
+        }
+    }
+
+    // 清理其他成员保存的该发布者发送 Track，允许同一用户重新入会后重新创建。
+    for (const auto& session : remaining_sessions) {
+        session->RemoveOutgoingTracks(uid);
+    }
 }
 
 std::shared_ptr<MediaPeer> MediaRoom::GetPeer(int uid) const

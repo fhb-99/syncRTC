@@ -15,7 +15,7 @@ class MediaRoom;
 class Session;
 
 // MediaServer 逻辑线程的最小消息单元。Session 已经完成 UDS 长度帧解包，
-// LogicSystem 再根据 JSON 中的 signal_type 分发 offer、answer 或 candidate。
+// LogicSystem 再根据 JSON 中的 signal_type 分发媒体信令或离会清理消息。
 struct MediaSignalNode
 {
     std::shared_ptr<Session> session;
@@ -39,6 +39,7 @@ private:
     void HandleOffer(std::shared_ptr<Session> session, const MediaSignalRequest& request);
     void HandleAnswer(const MediaSignalRequest& request);
     void HandleCandidate(std::shared_ptr<Session> session, const MediaSignalRequest& request);
+    void HandleLeave(const MediaSignalRequest& request);
 
     // MediaServer 只保存当前进程内的运行时房间，会议成员资格仍由 RealtimeServer 管理。
     std::unordered_map<std::uint64_t, std::shared_ptr<MediaRoom>> m_rooms;

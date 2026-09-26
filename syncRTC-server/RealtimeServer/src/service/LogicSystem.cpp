@@ -1361,6 +1361,19 @@ void LogicSystem::LeaveMeetingHandler(std::shared_ptr<Session> session, std::uin
         }
     }
 
+    const std::uint64_t signal_id = session->GetMediaSignalId();
+    if (signal_id != 0) {
+        Json::Value media_request;
+        media_request["signal_id"] = static_cast<Json::UInt64>(signal_id);
+        media_request["meeting_id"] = static_cast<Json::UInt64>(meeting_id);
+        media_request["uid"] = uid;
+        media_request["signal_type"] = "leave";
+        SendMediaSignal(media_request.toStyledString());
+
+        m_media_signal_sessions.erase(signal_id);
+        session->SetMediaSignalId(0);
+    }
+
     // 离开会议只清理实时状态，不改变会议生命周期或参会记录。
     session->SetMeetingId(0);
     value["error"] = ErrorCodes::SUCCESS;
