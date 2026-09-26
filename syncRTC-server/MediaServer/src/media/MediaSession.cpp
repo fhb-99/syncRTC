@@ -266,6 +266,16 @@ void MediaSession::RequestRenegotiation()
 {
     {
         std::lock_guard<std::mutex> lock(m_negotiation_mutex);
+        // 记录重新协商入口状态，确认请求是否到达以及被哪个条件拦截。
+        std::cout << "[renegotiation-request]"
+                  << " meeting=" << m_meeting_id
+                  << " uid=" << m_uid
+                  << " initial_answer_created=" << m_initial_answer_created
+                  << " waiting_remote_answer=" << m_waiting_remote_answer
+                  << " negotiation_pending=" << m_negotiation_pending
+                  << " signaling_state=" << m_peer_connection->signalingState()
+                  << std::endl;
+
         if (!m_initial_answer_created || m_waiting_remote_answer) {
             // 初次 Answer 尚未生成，或者上一份服务端 Offer 仍在等待客户端 Answer 时，
             // 只记录“还需要再协商”。这样连续入会不会让同一 PeerConnection 同时存在多个 Offer。
