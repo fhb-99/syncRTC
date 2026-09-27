@@ -220,9 +220,24 @@ void MediaSession::SetRemoteOffer(std::string sdp, std::uint64_t signal_id)
 
 void MediaSession::SetRemoteAnswer(std::string sdp)
 {
+    std::cout << "[remote-answer-received]"
+              << " meeting=" << m_meeting_id
+              << " uid=" << m_uid
+              << " signal_id=" << m_signal_id
+              << " sdp_bytes=" << sdp.size()
+              << " signaling_state=" << m_peer_connection->signalingState()
+              << std::endl;
+
     // 该 Answer 对应 MediaServer 主动发出的 Offer。设置后，新消费 Track 才真正完成协商，
     // DTLS/SRTP 连接建立后 Track 会进入 Open，已有 RTP 转发代码即可开始写包。
     m_peer_connection->setRemoteDescription(rtc::Description(std::move(sdp), "answer"));
+
+    std::cout << "[remote-answer-applied]"
+              << " meeting=" << m_meeting_id
+              << " uid=" << m_uid
+              << " signal_id=" << m_signal_id
+              << " signaling_state=" << m_peer_connection->signalingState()
+              << std::endl;
 
     bool create_next_offer = false;
     {
