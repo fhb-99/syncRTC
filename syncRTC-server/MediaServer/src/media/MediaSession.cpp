@@ -142,9 +142,8 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
             },
             nullptr);
 
-        // 房间在确认发布 Track 存在后，为其他成员准备对应的发送 Track。
-        // 这些 Track 本阶段只创建和保存，等后续 Offer/Answer 协商完成后才会进入 Open 状态。
-        m_track_ready_callback(publisher_uid, media_type);
+        // libdatachannel 触发 onTrack 时仍持有内部 Track 锁，不能在这里通过房间回调
+        // 反向调用同一个 PeerConnection::addTrack。等 setRemoteDescription 返回后再通知房间。
     });
 }
 
@@ -180,6 +179,22 @@ void MediaSession::SetRemoteOffer(std::string sdp, std::uint64_t signal_id)
 
     // 先设置客户端 Offer，让 libdatachannel 根据其中的 audio/video m-line 创建接收 Track。
     m_peer_connection->setRemoteDescription(rtc::Description(m_remote_offer, "offer"));
+
+    bool video_track_ready = false;
+    bool audio_track_ready = false;
+    {
+        std::lock_guard<std::mutex> lock(m_track_mutex);
+        video_track_ready = static_cast<bool>(m_incoming_video_track);
+        audio_track_ready = static_cast<bool>(m_incoming_audio_track);
+    }
+
+    // 离开 libdatachannel 和本地 Track 锁后再创建消费 Track，避免 addTrack 重入内部锁。
+    if (video_track_ready) {
+        m_track_ready_callback(m_uid, "video");
+    }
+    if (audio_track_ready) {
+        m_track_ready_callback(m_uid, "audio");
+    }
 
     // 关闭自动协商后，需要显式生成本地 Answer。当前 Answer 只回应客户端原有的发布 Track；
     // MediaServer 新增的消费 Track 会保留在 PeerConnection 中，等待后续服务端 Offer 再协商。
