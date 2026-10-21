@@ -40,7 +40,7 @@ int main()
             return EXIT_FAILURE;
         }
 
-        // 先连通 MediaServer，客户端发起 offer 后才能立即交给 UDS 连接处理。
+        // 启动后台连接维护；Media 尚未启动时仍提供 TCP 服务，媒体请求暂时返回网络错误。
         LogicSystem::GetInstance()->StartMediaSignalClient(media_socket_path);
 
         CServer server(static_cast<unsigned short>(port_value));
