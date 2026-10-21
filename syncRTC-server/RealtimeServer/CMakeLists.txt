@@ -26,6 +26,7 @@ endforeach()
 set(REALTIME_LOGIC_SOURCES
     src/config/ConfigMgr.cpp
     src/net/Session.cpp
+    src/net/MediaSignalClient.cpp
     src/service/LogicSystem.cpp
     src/storage/RedisMgr.cpp
     src/storage/MySqlMgr.cpp
@@ -122,6 +123,19 @@ add_custom_command(TARGET RealtimeServer POST_BUILD
 )
 
 if(BUILD_TESTING)
+    add_executable(media_signal_client_test
+        tests/MediaSignalClientTest.cpp
+        ${REALTIME_LOGIC_SOURCES}
+    )
+    target_compile_definitions(media_signal_client_test PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(media_signal_client_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(media_signal_client_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>)
+    target_link_libraries(media_signal_client_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
+    add_dependencies(media_signal_client_test RealtimeServer)
+    add_test(NAME media_signal_client_test COMMAND media_signal_client_test)
+    set_tests_properties(media_signal_client_test PROPERTIES TIMEOUT 45)
+
     add_executable(session_test
         tests/SessionTest.cpp
         ${REALTIME_LOGIC_SOURCES}

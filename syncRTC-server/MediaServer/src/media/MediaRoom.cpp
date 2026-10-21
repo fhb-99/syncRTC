@@ -4,6 +4,7 @@
 #include "media/MediaSession.h"
 
 #include <atomic>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -15,6 +16,7 @@ struct OutgoingTrackBinding
 {
     std::shared_ptr<MediaSession> session;
     int publisher_uid;
+    std::uint64_t publisher_session_id;
     std::string media_type;
     std::uint32_t ssrc;
 };
@@ -42,11 +44,17 @@ void MediaRoom::AddPeer(std::shared_ptr<MediaPeer> peer)
     m_peers[peer->GetUid()] = std::move(peer);
 }
 
-void MediaRoom::RemovePeer(int uid)
+void MediaRoom::RemovePeer(int uid, std::uint64_t expected_session_id)
 {
     std::vector<std::shared_ptr<MediaSession>> remaining_sessions;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        const auto peer = m_peers.find(uid);
+        if (expected_session_id != 0 &&
+            (peer == m_peers.end() || !peer->second->GetSession() ||
+             peer->second->GetSession()->GetInstanceId() != expected_session_id)) {
+            return;
+        }
         m_peers.erase(uid);
         m_video_publishers.erase(uid);
         m_audio_publishers.erase(uid);
@@ -80,12 +88,31 @@ std::size_t MediaRoom::PeerCount() const
     return m_peers.size();
 }
 
+std::vector<std::shared_ptr<MediaSession>> MediaRoom::GetSessionsForConnection(
+    const std::shared_ptr<Session>& connection) const
+{
+    std::vector<std::shared_ptr<MediaSession>> sessions;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& [uid, peer] : m_peers) {
+        const auto session = peer->GetSession();
+        if (session && session->GetSignalSession() == connection) {
+            sessions.push_back(session);
+        }
+    }
+    return sessions;
+}
+
 void MediaRoom::RegisterPublisherTrack(int publisher_uid, const std::string& media_type)
 {
     std::vector<OutgoingTrackBinding> tracks_to_add;
     std::vector<std::shared_ptr<MediaSession>> sessions_to_negotiate;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        const auto publisher_peer = m_peers.find(publisher_uid);
+        if (publisher_peer == m_peers.end() || !publisher_peer->second->GetSession()) {
+            return;
+        }
+        const auto publisher_session_id = publisher_peer->second->GetSession()->GetInstanceId();
         auto& publishers = media_type == "video" ? m_video_publishers : m_audio_publishers;
 
         // 每个发布者的每种媒体只登记一次。音视频使用不同 SSRC，且同一发布流
@@ -110,9 +137,9 @@ void MediaRoom::RegisterPublisherTrack(int publisher_uid, const std::string& med
 
             // 已在会议中的成员需要同时增加新发布者的 H264 和 Opus 消费 Track。
             tracks_to_add.push_back(
-                {target_peer->GetSession(), publisher_uid, "video", video_it->second});
+                {target_peer->GetSession(), publisher_uid, publisher_session_id, "video", video_it->second});
             tracks_to_add.push_back(
-                {target_peer->GetSession(), publisher_uid, "audio", audio_it->second});
+                {target_peer->GetSession(), publisher_uid, publisher_session_id, "audio", audio_it->second});
             sessions_to_negotiate.push_back(target_peer->GetSession());
         }
 
@@ -131,10 +158,12 @@ void MediaRoom::RegisterPublisherTrack(int publisher_uid, const std::string& med
                 }
 
                 // 新成员也要一次性订阅会议中已经存在成员的 H264 和 Opus Track。
+                // 发布表和成员表在同一房间锁下维护，登记的发布者必有对应的媒体会话。
+                const auto existing_session_id = m_peers.at(existing_uid)->GetSession()->GetInstanceId();
                 tracks_to_add.push_back(
-                    {publisher_session, existing_uid, "video", existing_video_ssrc});
+                    {publisher_session, existing_uid, existing_session_id, "video", existing_video_ssrc});
                 tracks_to_add.push_back(
-                    {publisher_session, existing_uid, "audio", existing_audio_it->second});
+                    {publisher_session, existing_uid, existing_session_id, "audio", existing_audio_it->second});
                 needs_negotiation = true;
             }
             if (needs_negotiation) {
@@ -146,24 +175,62 @@ void MediaRoom::RegisterPublisherTrack(int publisher_uid, const std::string& med
     // addTrack 可能进入 libdatachannel 内部状态机，所以离开房间锁后再执行，
     // 避免媒体库回调反向访问 MediaRoom 时形成锁等待。
     for (const auto& binding : tracks_to_add) {
-        binding.session->AddOutgoingTrack(
-            binding.publisher_uid, binding.media_type, binding.ssrc);
+        // 前面的操作可能已清理失败成员，跳过涉及已移除来源或接收者的剩余绑定。
+        const auto target = GetPeer(binding.session->GetUid());
+        const auto source = GetPeer(binding.publisher_uid);
+        if (!target || target->GetSession() != binding.session || !source ||
+            !source->GetSession() ||
+            source->GetSession()->GetInstanceId() != binding.publisher_session_id) {
+            continue;
+        }
+        try {
+            binding.session->AddOutgoingTrack(
+                binding.publisher_uid, binding.publisher_session_id, binding.media_type, binding.ssrc);
+        }
+        catch (const std::exception& error) {
+            // 失败属于正在操作的接收会话，不能按触发 Track 就绪通知的发布者 UID 清理。
+            std::cerr << "[media-control-error] type=add-track meeting=" << m_meeting_id
+                      << " uid=" << binding.session->GetUid()
+                      << " instance=" << binding.session->GetInstanceId()
+                      << " error=" << error.what() << std::endl;
+            RemovePeer(binding.session->GetUid(), binding.session->GetInstanceId());
+        }
     }
 
     // 必须先把本轮所有消费 Track 加入 PeerConnection，再生成 Offer，
     // 这样一份 SDP 就能完整描述本次新增的音频和视频 m-line。
     for (const auto& session : sessions_to_negotiate) {
-        session->RequestRenegotiation();
+        const auto peer = GetPeer(session->GetUid());
+        if (!peer || peer->GetSession() != session) {
+            continue;
+        }
+        try {
+            session->RequestRenegotiation();
+        }
+        catch (const std::exception& error) {
+            std::cerr << "[media-control-error] type=renegotiate meeting=" << m_meeting_id
+                      << " uid=" << session->GetUid()
+                      << " instance=" << session->GetInstanceId()
+                      << " error=" << error.what() << std::endl;
+            RemovePeer(session->GetUid(), session->GetInstanceId());
+        }
     }
 }
 
 void MediaRoom::ForwardRtp(int publisher_uid,
+                           std::uint64_t publisher_session_id,
                            const std::string& media_type,
                            rtc::binary packet)
 {
     std::vector<std::shared_ptr<MediaSession>> target_sessions;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        // 与 RemovePeer/AddPeer 共用房间锁。旧 Track 的回调即使仍存活，也不能冒充同 UID 的新会话。
+        const auto publisher = m_peers.find(publisher_uid);
+        if (publisher == m_peers.end() || !publisher->second->GetSession() ||
+            publisher->second->GetSession()->GetInstanceId() != publisher_session_id) {
+            return;
+        }
         for (const auto& [target_uid, target_peer] : m_peers) {
             if (target_uid == publisher_uid || !target_peer->GetSession()) {
                 continue;
@@ -191,6 +258,6 @@ void MediaRoom::ForwardRtp(int publisher_uid,
     // 改写该发布者在房间中的 SSRC，并写入目标成员已经协商完成的发送 Track。
     // 网络发送不持有房间锁，某个客户端的发送速度不会阻塞成员表的查询和更新。
     for (const auto& target_session : target_sessions) {
-        target_session->ForwardRtp(publisher_uid, media_type, packet);
+        target_session->ForwardRtp(publisher_uid, publisher_session_id, media_type, packet);
     }
 }

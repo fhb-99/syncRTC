@@ -8,15 +8,25 @@
 #include <mutex>
 #include <utility>
 
+namespace {
+
+// 不同 room worker 会并发创建会话。这里只需要唯一编号，不承担其他状态的同步。
+std::atomic<std::uint64_t> next_session_id{1};
+
+} // namespace
+
 MediaSession::MediaSession(std::uint64_t meeting_id,
                            int uid,
+                           std::uint64_t signal_id,
+                           std::weak_ptr<Session> signal_session,
                            SignalCallback signal_callback,
                            TrackReadyCallback track_ready_callback,
                            MediaPacketCallback media_packet_callback)
     : m_meeting_id(meeting_id),
       m_uid(uid),
-      m_signal_id(0),
-      m_signal_callback(std::move(signal_callback)),
+      m_instance_id(next_session_id.fetch_add(1, std::memory_order_relaxed)),
+      m_signal_id(signal_id),
+      m_signal_session(std::move(signal_session)),
       m_track_ready_callback(std::move(track_ready_callback)),
       m_media_packet_callback(std::move(media_packet_callback))
 {
@@ -57,37 +67,67 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
 
     m_peer_connection = std::make_shared<rtc::PeerConnection>(configuration);
 
-    m_peer_connection->onLocalDescription([this](rtc::Description description) {
-        const std::string type = description.typeString();
-        const std::string sdp = std::string(description);
-        std::cout << "[media-local-sdp]"
-                  << " meeting=" << m_meeting_id
-                  << " uid=" << m_uid
-                  << " signal_id=" << m_signal_id
-                  << " type=" << type
-                  << " sdp_bytes=" << sdp.size()
-                  << std::endl;
+    // 本地信令由库异步通知。按值捕获不可变身份和投递函数，不读取 MediaSession，
+    // 即使通知晚于会话销毁，也只会产生可被 RoomWorker 丢弃的旧事件。
+    const std::uint64_t session_id = m_instance_id;
+    m_peer_connection->onLocalDescription(
+        [meeting_id, uid, signal_id, session_id, signal_callback](rtc::Description description) {
+            MediaSignalResponse response;
+            response.signal_id = signal_id;
+            response.meeting_id = meeting_id;
+            response.uid = uid;
+            response.signal_type = description.typeString();
+            response.sdp = std::string(description);
+            signal_callback(session_id, std::move(response));
+        });
+    m_peer_connection->onLocalCandidate(
+        [meeting_id, uid, signal_id, session_id, signal_callback](rtc::Candidate candidate) {
+            MediaSignalResponse response;
+            response.signal_id = signal_id;
+            response.meeting_id = meeting_id;
+            response.uid = uid;
+            response.signal_type = "candidate";
+            response.candidate = std::string(candidate);
+            response.mid = candidate.mid();
+            signal_callback(session_id, std::move(response));
+        });
+}
 
-        MediaSignalResponse response;
-        response.signal_id = m_signal_id;
-        response.meeting_id = m_meeting_id;
-        response.uid = m_uid;
-        response.signal_type = type;
-        response.sdp = sdp;
-        m_signal_callback(response);
-    });
-    m_peer_connection->onLocalCandidate([this](rtc::Candidate candidate) {
-        MediaSignalResponse response;
-        response.signal_id = m_signal_id;
-        response.meeting_id = m_meeting_id;
-        response.uid = m_uid;
-        response.signal_type = "candidate";
-        response.candidate = std::string(candidate);
-        response.mid = candidate.mid();
-        m_signal_callback(response);
-    });
+std::uint64_t MediaSession::GetMeetingId() const
+{
+    return m_meeting_id;
+}
 
-    m_peer_connection->onTrack([this](std::shared_ptr<rtc::Track> track) {
+int MediaSession::GetUid() const
+{
+    return m_uid;
+}
+
+std::uint64_t MediaSession::GetInstanceId() const
+{
+    return m_instance_id;
+}
+
+std::uint64_t MediaSession::GetSignalId() const
+{
+    return m_signal_id;
+}
+
+std::shared_ptr<Session> MediaSession::GetSignalSession() const
+{
+    return m_signal_session.lock();
+}
+
+void MediaSession::SetRemoteOffer(std::string sdp)
+{
+    // 构造函数中尚未建立 shared_ptr 所有权，在应用首份 Offer 前注册弱引用回调。
+    // onTrack 仍只保存接收 Track、安装收包回调，不在库内部锁中登记房间或发起协商。
+    m_peer_connection->onTrack([weak_session = weak_from_this()](std::shared_ptr<rtc::Track> track) {
+        const auto session = weak_session.lock();
+        if (!session) {
+            return;
+        }
+
         const std::string media_type = track->description().type();
         if (media_type != "video" && media_type != "audio") {
             return;
@@ -95,28 +135,30 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
 
         // 判断 客户端和服务器的 Track 是否正常建立
         std::cout << "[track-in-ready]"
-                  << " meeting=" << m_meeting_id
-                  << " publisher=" << m_uid
+                  << " meeting=" << session->m_meeting_id
+                  << " publisher=" << session->m_uid
                   << " media=" << media_type
                   << " mid=" << track->description().mid()
                   << std::endl;
 
         {
-            std::lock_guard<std::mutex> lock(m_track_mutex);
+            std::lock_guard<std::mutex> lock(session->m_track_mutex);
             // 这里保存的是客户端发布给 MediaServer 的接收 Track。
             // 保存 shared_ptr 可以保证后续 RTP 到达时 Track 及其回调仍然有效。
             if (media_type == "video") {
-                m_incoming_video_track = track;
+                session->m_incoming_video_track = track;
             } else {
-                m_incoming_audio_track = track;
+                session->m_incoming_audio_track = track;
             }
         }
 
-        const std::uint64_t meeting_id = m_meeting_id;
-        const int publisher_uid = m_uid;
-        const MediaPacketCallback packet_callback = m_media_packet_callback;
+        const std::uint64_t meeting_id = session->m_meeting_id;
+        const int publisher_uid = session->m_uid;
+        // 按值保留来源实例号，不在到包时根据 UID 查询并替换成当前会话身份。
+        const std::uint64_t publisher_session_id = session->m_instance_id;
+        const MediaPacketCallback packet_callback = session->m_media_packet_callback;
         track->onMessage(
-            [meeting_id, publisher_uid, media_type, packet_callback](rtc::binary packet) {
+            [meeting_id, publisher_uid, publisher_session_id, media_type, packet_callback](rtc::binary packet) {
                 // Track 的二进制回调既可能收到 RTP，也可能收到 RTCP。
                 // 本阶段只做音视频 RTP 转发，质量反馈、丢包重传和关键帧请求后续再接入。
                 if (rtc::IsRtcp(packet)) {
@@ -138,34 +180,19 @@ MediaSession::MediaSession(std::uint64_t meeting_id,
 
                 // packet 仍是客户端完成编码、RTP 封装后的原始数据。
                 // MediaServer 不解码、不转码，只把发布者身份和媒体类型交给房间完成选路。
-                packet_callback(publisher_uid, media_type, std::move(packet));
+                packet_callback(publisher_uid, publisher_session_id, media_type, std::move(packet));
             },
             nullptr);
 
         // libdatachannel 触发 onTrack 时仍持有内部 Track 锁，不能在这里通过房间回调
         // 反向调用同一个 PeerConnection::addTrack。等 setRemoteDescription 返回后再通知房间。
     });
-}
-
-std::uint64_t MediaSession::GetMeetingId() const
-{
-    return m_meeting_id;
-}
-
-int MediaSession::GetUid() const
-{
-    return m_uid;
-}
-
-void MediaSession::SetRemoteOffer(std::string sdp, std::uint64_t signal_id)
-{
-    m_signal_id = signal_id;
     m_remote_offer = std::move(sdp);
 
     std::cout << "[remote-offer-check]"
           << " meeting=" << m_meeting_id
           << " uid=" << m_uid
-          << " signal_id=" << signal_id
+          << " signal_id=" << m_signal_id
           << " sdp_bytes=" << m_remote_offer.size()
           << " has_audio=" << (m_remote_offer.find("m=audio") != std::string::npos)
           << " has_video=" << (m_remote_offer.find("m=video") != std::string::npos)
@@ -188,12 +215,13 @@ void MediaSession::SetRemoteOffer(std::string sdp, std::uint64_t signal_id)
         audio_track_ready = static_cast<bool>(m_incoming_audio_track);
     }
 
-    // 离开 libdatachannel 和本地 Track 锁后再创建消费 Track，避免 addTrack 重入内部锁。
+    // 离开 libdatachannel 和本地 Track 锁后投递就绪通知，避免 addTrack 重入内部锁。
+    // 回调只入队；所属 worker 在本次 Offer 处理结束、初始 Answer 创建后再登记发布者。
     if (video_track_ready) {
-        m_track_ready_callback(m_uid, "video");
+        m_track_ready_callback(m_uid, m_instance_id, "video");
     }
     if (audio_track_ready) {
-        m_track_ready_callback(m_uid, "audio");
+        m_track_ready_callback(m_uid, m_instance_id, "audio");
     }
 
     // 关闭自动协商后，需要显式生成本地 Answer。当前 Answer 只回应客户端原有的发布 Track；
@@ -262,6 +290,7 @@ void MediaSession::AddRemoteCandidate(std::string candidate, std::string mid)
 }
 
 void MediaSession::AddOutgoingTrack(int publisher_uid,
+                                    std::uint64_t publisher_session_id,
                                     const std::string& media_type,
                                     std::uint32_t ssrc)
 {
@@ -291,7 +320,7 @@ void MediaSession::AddOutgoingTrack(int publisher_uid,
 
     // publisher_uid 表示这条消费 Track 属于哪位发布者；同一接收者会为每位其他成员
     // 分别保存一对 audio/video Track，后续客户端才能按 MID 区分不同参会者。
-    outgoing_tracks.emplace(publisher_uid, OutgoingTrack{std::move(track), ssrc});
+    outgoing_tracks.emplace(publisher_uid, OutgoingTrack{std::move(track), ssrc, publisher_session_id});
 }
 
 void MediaSession::RemoveOutgoingTracks(int publisher_uid)
@@ -330,6 +359,7 @@ void MediaSession::RequestRenegotiation()
 }
 
 void MediaSession::ForwardRtp(int publisher_uid,
+                              std::uint64_t publisher_session_id,
                               const std::string& media_type,
                               const rtc::binary& packet)
 {
@@ -355,9 +385,16 @@ void MediaSession::ForwardRtp(int publisher_uid,
             }
             return;
         }
+        // 房间校验后到达这里之前，发布者可能已离会重入，UID 对应的 Track 也可能已替换。
+        // 必须在同一把锁内核对来源身份并取得 Track/SSRC 快照，旧包不能借用新会话的发送路径。
+        if (track_it->second.publisher_session_id != publisher_session_id) {
+            return;
+        }
         outgoing_track = track_it->second;
     }
 
+    // 快照取得后只使用这条旧或当前 Track，不再按 UID 查找；离会不能撤回已开始的发送，
+    // 但即使随后发生重入，也不会把这个包改写成新会话的 SSRC 或送入它的 Track。
     // 新增消费 Track 在完成后续 Offer/Answer 前不会 Open，此时跳过发送即可。
     // 协商完成后，相同的转发路径会直接开始写 RTP，无需再修改房间转发逻辑。
     if (!outgoing_track.track->isOpen()) {

@@ -38,6 +38,8 @@ constexpr std::uint16_t kSessionDisconnectedEventId = 0xFFFE;
 constexpr std::uint16_t kReconnectTimeoutCheckEventId = 0xFFFD;
 // MediaServer 通过 UDS 返回的信令不会暴露给客户端，先投递到 LogicSystem 查找原 Session。
 constexpr std::uint16_t kMediaSignalResponseEventId = 0xFFFC;
+constexpr std::uint16_t kMediaConnectedEventId = 0xFFFB;
+constexpr std::uint16_t kMediaDisconnectedEventId = 0xFFFA;
 
 std::string HashMeetingPassword(const std::string& password)
 {
@@ -157,7 +159,10 @@ Json::Value MeetingMessageToJson(const MeetingMessageInfo& message,
 } // namespace
 
 LogicSystem::LogicSystem()
-    : m_stop(false)
+    : m_stop(false),
+      m_media_client([this](MediaSignalClient::Event event, std::uint64_t epoch, std::string message) {
+          PostMediaEvent(event, epoch, std::move(message));
+      })
 {
     auto ai_config = ConfigMgr::Init()["AIService"];
     const std::string ai_host = ai_config["Host"];
@@ -173,16 +178,8 @@ LogicSystem::LogicSystem()
 
 LogicSystem::~LogicSystem()
 {
-    if (m_media_fd != -1) {
-        ::shutdown(m_media_fd, SHUT_RDWR);
-    }
-    if (m_media_read_thread.joinable()) {
-        m_media_read_thread.join();
-    }
-    if (m_media_fd != -1) {
-        ::close(m_media_fd);
-        m_media_fd = -1;
-    }
+    // 先停止 I/O 并等待其最后的断线事件入队，再排空并退出业务线程。
+    m_media_client.Stop();
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -197,103 +194,45 @@ LogicSystem::~LogicSystem()
 
 void LogicSystem::StartMediaSignalClient(const std::string& socket_path)
 {
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    if (socket_path.size() >= sizeof(address.sun_path)) {
-        throw std::runtime_error("MediaServer UDS 地址过长");
-    }
-    std::memcpy(address.sun_path, socket_path.data(), socket_path.size());
-
-    m_media_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (m_media_fd == -1) {
-        throw std::runtime_error("创建 MediaServer UDS 连接失败：" +
-                                 std::string(std::strerror(errno)));
-    }
-    if (::connect(m_media_fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == -1) {
-        const std::string error = std::strerror(errno);
-        ::close(m_media_fd);
-        m_media_fd = -1;
-        throw std::runtime_error("连接 MediaServer UDS 失败：" + error);
-    }
-
-    // UDS 读线程只负责收完整内部帧，客户端 TCP 写回仍统一由 LogicSystem 线程处理。
-    m_media_read_thread = std::thread(&LogicSystem::ReadMediaSignalResponses, this);
+    m_media_client.Start(socket_path);
 }
 
 bool LogicSystem::SendMediaSignal(const std::string& message)
 {
-    std::lock_guard<std::mutex> lock(m_media_send_mutex);
-    if (m_media_fd == -1) {
-        return false;
-    }
-
-    const auto body_length = static_cast<std::uint32_t>(message.size());
-    std::string frame(sizeof(std::uint32_t) + message.size(), '\0');
-    frame[0] = static_cast<char>((body_length >> 24U) & 0xFFU);
-    frame[1] = static_cast<char>((body_length >> 16U) & 0xFFU);
-    frame[2] = static_cast<char>((body_length >> 8U) & 0xFFU);
-    frame[3] = static_cast<char>(body_length & 0xFFU);
-    frame.replace(sizeof(std::uint32_t), message.size(), message);
-
-    std::size_t sent_length = 0;
-    while (sent_length < frame.size()) {
-        const ssize_t sent = ::send(m_media_fd, frame.data() + sent_length,
-                                    frame.size() - sent_length, MSG_NOSIGNAL);
-        if (sent > 0) {
-            sent_length += static_cast<std::size_t>(sent);
-            continue;
-        }
-        if (sent == -1 && errno == EINTR) {
-            continue;
-        }
-        return false;
-    }
-
-    return true;
+    return m_media_client.Send(m_media_epoch, message);
 }
 
-void LogicSystem::ReadMediaSignalResponses()
+void LogicSystem::PostMediaEvent(MediaSignalClient::Event event, std::uint64_t epoch, std::string message)
 {
-    constexpr std::size_t kFrameHeaderLength = sizeof(std::uint32_t);
-    std::array<char, 4096> read_buffer{};
-    std::string receive_buffer;
+    auto node = std::make_shared<LogicNode>();
+    node->id = event == MediaSignalClient::Event::Connected ? kMediaConnectedEventId :
+        event == MediaSignalClient::Event::Disconnected ? kMediaDisconnectedEventId : kMediaSignalResponseEventId;
+    node->media_epoch = epoch;
+    node->message = std::move(message);
+    PostMsgToQue(std::move(node));
+}
 
-    while (true) {
-        const ssize_t read_length = ::recv(m_media_fd, read_buffer.data(), read_buffer.size(), 0);
-        if (read_length > 0) {
-            receive_buffer.append(read_buffer.data(), static_cast<std::size_t>(read_length));
-
-            while (receive_buffer.size() >= kFrameHeaderLength) {
-                const auto* header = reinterpret_cast<const unsigned char*>(receive_buffer.data());
-                const std::uint32_t body_length =
-                    (static_cast<std::uint32_t>(header[0]) << 24U) |
-                    (static_cast<std::uint32_t>(header[1]) << 16U) |
-                    (static_cast<std::uint32_t>(header[2]) << 8U) |
-                    static_cast<std::uint32_t>(header[3]);
-                const std::size_t frame_length = kFrameHeaderLength + body_length;
-                if (receive_buffer.size() < frame_length) {
-                    break;
-                }
-
-                PostMediaSignalResponse(
-                    receive_buffer.substr(kFrameHeaderLength, body_length));
-                receive_buffer.erase(0, frame_length);
+bool LogicSystem::AcceptMediaEvent(const LogicNode& message)
+{
+    if (message.id == kMediaSignalResponseEventId) {
+        // I/O 已经断开但断线通知尚在排队时，也拒绝旧响应。
+        return message.media_epoch == m_media_epoch && m_media_client.IsCurrent(m_media_epoch);
+    }
+    if (message.media_epoch < m_media_epoch ||
+        (message.id == kMediaConnectedEventId && message.media_epoch == m_media_epoch)) {
+        return false;
+    }
+    // 新连接建立或当前连接断开都失效旧映射。按原编号清理，避免覆盖客户端后来建立的关联。
+    for (const auto& [signal_id, weak_session] : m_media_signal_sessions) {
+        if (const auto session = weak_session.lock()) {
+            if (session->GetMediaSignalId() == signal_id) {
+                session->SetMediaSignalId(0);
             }
-            continue;
         }
-        if (read_length == -1 && errno == EINTR) {
-            continue;
-        }
-        return;
     }
-}
-
-void LogicSystem::PostMediaSignalResponse(std::string message)
-{
-    auto response = std::make_shared<LogicNode>();
-    response->id = kMediaSignalResponseEventId;
-    response->message = std::move(message);
-    PostMsgToQue(std::move(response));
+    m_media_signal_sessions.clear();
+    m_media_epoch = message.media_epoch;
+    return false;
 }
 
 void LogicSystem::PostMsgToQue(std::shared_ptr<LogicNode> message)
@@ -353,6 +292,10 @@ void LogicSystem::DealMessage()
             m_msg_que.pop();
         }
 
+        if ((message->id == kMediaConnectedEventId || message->id == kMediaDisconnectedEventId ||
+             message->id == kMediaSignalResponseEventId) && !AcceptMediaEvent(*message)) {
+            continue;
+        }
         const auto handler = maps.find(message->id);
         if (handler == maps.end()) {
             std::cerr << "未注册的业务消息，id=" << message->id << std::endl;
@@ -2024,8 +1967,14 @@ void LogicSystem::MediaCandidateHandler(std::shared_ptr<Session> session, std::u
     }
 
     Json::Value media_request;
-    // candidate 属于当前 offer 协商，沿用 offer 的 signal_id 才能让服务端产生的 candidate 回到同一客户端。
-    media_request["signal_id"] = static_cast<Json::UInt64>(session->GetMediaSignalId());
+    // 断线清理后必须先建立新的 Offer 关联，不能把旧 Candidate 以零编号发往新连接。
+    const auto signal_id = session->GetMediaSignalId();
+    const auto signal_it = m_media_signal_sessions.find(signal_id);
+    if (signal_id == 0 || signal_it == m_media_signal_sessions.end() || signal_it->second.lock() != session) {
+        value["error"] = ErrorCodes::ERROR_NETWORK;
+        return;
+    }
+    media_request["signal_id"] = static_cast<Json::UInt64>(signal_id);
     media_request["meeting_id"] = static_cast<Json::UInt64>(meeting_id);
     media_request["uid"] = uid;
     media_request["signal_type"] = "candidate";
