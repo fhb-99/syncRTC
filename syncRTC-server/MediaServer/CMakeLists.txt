@@ -89,6 +89,80 @@ add_custom_command(TARGET MediaServer POST_BUILD
 )
 
 if(BUILD_TESTING)
+    add_executable(rtp_session_test
+        tests/RtpSessionTest.cpp
+        src/config/ConfigMgr.cpp
+        src/media/MediaRoom.cpp
+        src/media/MediaPeer.cpp
+        src/media/MediaSession.cpp
+    )
+    target_compile_definitions(rtp_session_test PRIVATE
+        PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(rtp_session_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(rtp_session_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>)
+    target_link_libraries(rtp_session_test PRIVATE ${MEDIA_SERVER_LIBRARIES})
+    add_dependencies(rtp_session_test MediaServer)
+    add_test(NAME rtp_session_test COMMAND rtp_session_test)
+    set_tests_properties(rtp_session_test PROPERTIES TIMEOUT 30)
+
+    add_executable(local_signal_test
+        tests/LocalSignalTest.cpp
+        ${MEDIA_LOGIC_SOURCES}
+    )
+    target_compile_definitions(local_signal_test PRIVATE
+        PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(local_signal_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(local_signal_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>)
+    target_link_libraries(local_signal_test PRIVATE ${MEDIA_SERVER_LIBRARIES})
+    # 真实 MediaSession 需要服务构建后复制的运行配置。
+    add_dependencies(local_signal_test MediaServer)
+    add_test(NAME local_signal_test COMMAND local_signal_test)
+    set_tests_properties(local_signal_test PROPERTIES TIMEOUT 30)
+
+    add_executable(session_send_test
+        tests/SessionSendTest.cpp
+        ${MEDIA_LOGIC_SOURCES}
+    )
+    target_compile_definitions(session_send_test PRIVATE
+        PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(session_send_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(session_send_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>)
+    target_link_libraries(session_send_test PRIVATE ${MEDIA_SERVER_LIBRARIES})
+    add_test(NAME session_send_test COMMAND session_send_test)
+    set_tests_properties(session_send_test PROPERTIES TIMEOUT 20)
+
+    add_executable(track_ready_test
+        tests/TrackReadyTest.cpp
+        ${MEDIA_LOGIC_SOURCES}
+    )
+    target_compile_definitions(track_ready_test PRIVATE
+        PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(track_ready_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_options(track_ready_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>)
+    target_link_libraries(track_ready_test PRIVATE ${MEDIA_SERVER_LIBRARIES})
+    # 测试创建真实 MediaSession，需要服务构建后复制到 bin/conf 的运行配置。
+    add_dependencies(track_ready_test MediaServer)
+    add_test(NAME track_ready_test COMMAND track_ready_test)
+    set_tests_properties(track_ready_test PROPERTIES TIMEOUT 30)
+
+    add_executable(room_thread_pool_test
+        tests/RoomThreadPoolTest.cpp
+    )
+    target_include_directories(room_thread_pool_test
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    )
+    target_compile_options(room_thread_pool_test
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    target_link_libraries(room_thread_pool_test PRIVATE Threads::Threads)
+    add_test(NAME room_thread_pool_test COMMAND room_thread_pool_test)
+
     add_executable(media_room_test
         tests/MediaRoomTest.cpp
         src/config/ConfigMgr.cpp

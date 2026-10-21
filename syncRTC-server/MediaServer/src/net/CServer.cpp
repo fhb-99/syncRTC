@@ -1,6 +1,7 @@
 #include "net/CServer.h"
 
 #include "net/Session.h"
+#include "service/LogicSystem.h"
 
 #include <cerrno>
 #include <cstring>
@@ -91,6 +92,10 @@ void CServer::Run()
         // LogicSystem 的工作线程，避免网络读取线程直接处理 SDP 和房间状态。
         while (session->HandleRead()) {
         }
-        ::close(client_fd);
+        // Session 先唤醒并等待在途收发，再关闭 fd；旧任务即使仍持有它，也不能继续发送。
+        session->Close();
+        // 读取线程已停止投递旧信令。先把各房间的清理事件入队，再接受新连接，
+        // 不等待 Worker 执行，也不在网络线程直接删除媒体会话。
+        LogicSystem::GetInstance()->PostSignalDisconnected(session);
     }
 }
