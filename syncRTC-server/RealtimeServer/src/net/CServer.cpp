@@ -5,6 +5,7 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <csignal>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -13,11 +14,16 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
+#include <sys/signalfd.h>
 #include <unistd.h>
 
 namespace {
 
-constexpr int kMaxEvents = 16;
+constexpr int kMaxEvents = 64;
+constexpr std::uint64_t kListenToken = 1;
+constexpr std::uint64_t kTimerToken = 2;
+constexpr std::uint64_t kWakeToken = 3;
+constexpr std::uint64_t kSignalToken = 4;
 
 std::runtime_error MakeSystemError(const std::string& action)
 {
@@ -26,33 +32,19 @@ std::runtime_error MakeSystemError(const std::string& action)
 
 } // namespace
 
-CServer::CServer(unsigned short port)
-    : m_port(port),
-      m_listen_fd(-1),
-      m_epoll_fd(-1),
-      m_timer_fd(-1)
+CServer::CServer(unsigned short port, MediaSignalClient& media_client)
+    : m_port(port), m_media_client(media_client)
 {
 }
 
-CServer::~CServer()
-{
-    for (const auto& client : m_client_fds) {
-        ::close(client.first);
-    }
+CServer::~CServer() { Shutdown(); }
 
-    if (m_timer_fd != -1) {
-        ::close(m_timer_fd);
-    }
-    if (m_listen_fd != -1) {
-        ::close(m_listen_fd);
-    }
+void CServer::Start(const std::string& media_socket_path)
+{
     if (m_epoll_fd != -1) {
-        ::close(m_epoll_fd);
+        throw std::logic_error("CServer 已启动");
     }
-}
-
-void CServer::Start()
-{
+    m_wakeup = std::make_shared<IoWakeup>();
     m_listen_fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (m_listen_fd == -1) {
         throw MakeSystemError("创建监听 socket 失败");
@@ -81,7 +73,8 @@ void CServer::Start()
     if (m_epoll_fd == -1) {
         throw MakeSystemError("创建 epoll 失败");
     }
-    AddToEpoll(m_listen_fd, EPOLLIN);
+    AddToEpoll(m_listen_fd, EPOLLIN, kListenToken);
+    AddToEpoll(m_wakeup->GetFd(), EPOLLIN, kWakeToken);
 
     m_timer_fd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (m_timer_fd == -1) {
@@ -94,77 +87,142 @@ void CServer::Start()
     if (::timerfd_settime(m_timer_fd, 0, &timer_spec, nullptr) == -1) {
         throw MakeSystemError("设置 timerfd 失败");
     }
-    AddToEpoll(m_timer_fd, EPOLLIN);
+    AddToEpoll(m_timer_fd, EPOLLIN, kTimerToken);
+    sigset_t signals;
+    ::sigemptyset(&signals);
+    ::sigaddset(&signals, SIGTERM);
+    ::sigaddset(&signals, SIGINT);
+    m_signal_fd = ::signalfd(-1, &signals, SFD_NONBLOCK | SFD_CLOEXEC);
+    if (m_signal_fd == -1) throw MakeSystemError("创建 signalfd 失败");
+    AddToEpoll(m_signal_fd, EPOLLIN, kSignalToken);
+    m_media_client.Start(media_socket_path, m_epoll_fd, m_wakeup);
 
     std::cout << "RealtimeServer 正在监听 0.0.0.0:" << m_port << std::endl;
 }
 
 void CServer::Run()
 {
+    try {
+        while (!m_wakeup->Stopping()) {
+            RunOnce();
+        }
+    } catch (...) {
+        Shutdown();
+        throw;
+    }
+    Shutdown();
+}
+
+void CServer::Stop()
+{
+    // 调用方在 Start 完成后使用；与 I/O 收尾并发时唤醒对象仍保活。
+    if (m_wakeup) {
+        m_wakeup->RequestStop();
+    }
+}
+
+void CServer::RunOnce(int max_wait_ms)
+{
+    m_media_client.Tick();
+    int timeout = m_media_client.NextTimeoutMs();
+    if (max_wait_ms >= 0 && (timeout < 0 || timeout > max_wait_ms)) {
+        timeout = max_wait_ms;
+    }
     std::array<epoll_event, kMaxEvents> events{};
-
-    while (true) {
-        const int ready_count = ::epoll_wait(m_epoll_fd, events.data(),
-                                             static_cast<int>(events.size()), -1);
-        if (ready_count == -1) {
-            if (errno == EINTR) {
-                continue;
-            }
-            throw MakeSystemError("等待 epoll 事件失败");
+    const int count = ::epoll_wait(m_epoll_fd, events.data(), kMaxEvents, timeout);
+    if (count == -1) {
+        if (errno == EINTR) {
+            return;
         }
-
-        for (int index = 0; index < ready_count; ++index) {
-            const int event_fd = events[index].data.fd;
-            const std::uint32_t event_flags = events[index].events;
-
-            if (event_fd == m_listen_fd) {
-                if ((event_flags & (EPOLLERR | EPOLLHUP)) != 0U) {
-                    throw std::runtime_error("监听 socket 发生异常");
-                }
-                AcceptClients();
+        throw MakeSystemError("等待 epoll 事件失败");
+    }
+    for (int index = 0; index < count && !m_wakeup->Stopping(); ++index) {
+        const auto token = events[index].data.u64;
+        const auto flags = events[index].events;
+        if (token == kListenToken) {
+            if (flags & (EPOLLERR | EPOLLHUP)) {
+                throw std::runtime_error("监听 socket 发生异常");
+            }
+            AcceptClients();
+        } else if (token == kTimerToken) {
+            HandleTimer();
+        } else if (token == kWakeToken) {
+            HandleWakeup();
+        } else if (token == kSignalToken) {
+            // 不在异步信号处理器里加锁；在唯一 I/O 线程请求正常退出。
+            signalfd_siginfo signal{};
+            ssize_t bytes;
+            do { bytes = ::read(m_signal_fd, &signal, sizeof(signal)); } while (bytes < 0 && errno == EINTR);
+            if (bytes == sizeof(signal)) {
+                std::cout << "[shutdown-signal] signal=" << signal.ssi_signo << std::endl;
+                Stop();
+            } else if (bytes < 0 && errno != EAGAIN) {
+                throw MakeSystemError("读取 signalfd 失败");
+            }
+        } else if (token & MediaSignalClient::kSocketTokenBit) {
+            m_media_client.HandleEvents(token, flags);
+        } else {
+            const auto it = m_sessions.find(token);
+            if (it == m_sessions.end()) {
                 continue;
             }
-            if (event_fd == m_timer_fd) {
-                HandleTimer();
-                continue;
+            const auto session = it->second;
+            bool alive = true;
+            // RDHUP/HUP 可能与大量尚未读完的数据同时出现。按预算继续读到 EOF，
+            // 不因本轮读满预算就提前丢弃内核中已到达的尾部帧。
+            if (flags & (EPOLLIN | EPOLLRDHUP | EPOLLHUP)) {
+                alive = session->HandleRead();
             }
-
-            // 监听 fd 和 timerfd 之外的事件都属于已经建立的客户端 Session。
-            const auto session_it = m_client_fds.find(event_fd);
-            if (session_it == m_client_fds.end()) {
-                continue;
+            if (alive && (flags & EPOLLOUT)) {
+                alive = session->HandleWrite();
             }
-
-            const std::shared_ptr<Session>& session = session_it->second;
-            bool should_close = false;
-            if ((event_flags & EPOLLIN) != 0U) {
-                should_close = !session->HandleRead();
+            if (!alive || (flags & EPOLLERR)) {
+                CloseClient(token);
+            } else {
+                UpdateClient(token, session);
             }
-            if (!should_close && (event_flags & EPOLLOUT) != 0U) {
-                should_close = !session->HandleWrite();
-            }
-            if ((event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0U) {
-                should_close = true;
-            }
-
-            if (should_close) {
-                CloseClient(event_fd);
-                continue;
-            }
-
-            std::uint32_t client_events = EPOLLIN | EPOLLRDHUP;
-            if (session->HasPendingWrite()) {
-                // 只有队列中有待发送数据时才监听 EPOLLOUT，避免空转。
-                client_events |= EPOLLOUT;
-            }
-            UpdateEpollEvents(event_fd, client_events);
         }
+    }
+    // 同一循环推进连接超时、重连和由其他线程请求的通道失效/写监听。
+    if (!m_wakeup->Stopping()) {
+        m_media_client.Tick();
+    }
+}
+
+void CServer::HandleWakeup()
+{
+    const auto pending = m_wakeup->Take();
+    for (const auto token : pending) {
+        if (m_wakeup->Stopping()) {
+            return;
+        }
+        const auto it = m_sessions.find(token);
+        if (it == m_sessions.end()) {
+            continue; // UDS 的唤醒由本轮 Tick 处理；旧 TCP 身份直接丢弃。
+        }
+        const auto session = it->second;
+        if (!session->HandleWrite()) {
+            CloseClient(token);
+        } else {
+            UpdateClient(token, session);
+        }
+    }
+}
+
+void CServer::UpdateClient(std::uint64_t token, const std::shared_ptr<Session>& session)
+{
+    epoll_event event{};
+    event.events = EPOLLIN | EPOLLRDHUP | (session->HasPendingWrite() ? EPOLLOUT : 0U);
+    event.data.u64 = token;
+    if (::epoll_ctl(m_epoll_fd, EPOLL_CTL_MOD, session->GetFd(), &event) == -1) {
+        CloseClient(token);
     }
 }
 
 void CServer::AcceptClients()
 {
-    while (true) {
+    // LT 监听按批次接纳，避免连接洪峰占住 UDS 与已有客户端。
+    for (int accepted = 0; accepted < kMaxEvents; ++accepted) {
         sockaddr_in client_address{};
         socklen_t address_length = sizeof(client_address);
         const int client_fd = ::accept4(m_listen_fd,
@@ -184,9 +242,10 @@ void CServer::AcceptClients()
         }
 
         try {
-            AddToEpoll(client_fd, EPOLLIN | EPOLLRDHUP);
-            // CServer 保存 Session 并统一管理 fd 的关闭时机。
-            m_client_fds[client_fd] = std::make_shared<Session>(client_fd);
+            const auto token = m_next_token++;
+            auto session = std::make_shared<Session>(client_fd, m_wakeup, token);
+            AddToEpoll(client_fd, EPOLLIN | EPOLLRDHUP, token);
+            m_sessions.emplace(token, std::move(session));
         }
         catch (const std::exception& exception) {
             std::cerr << "登记客户端连接失败：" << exception.what() << std::endl;
@@ -211,59 +270,63 @@ void CServer::HandleTimer()
         std::cerr << "读取 timerfd 失败：" << std::strerror(errno) << std::endl;
     }
 
-    // 消费定时器事件，并检查逻辑线程是否向 Session 写入了待发送数据。
-    for (const auto& client : m_client_fds) {
-        std::uint32_t client_events = EPOLLIN | EPOLLRDHUP;
-        if (client.second->HasPendingWrite()) {
-            // 逻辑线程写入发送队列后，在下一次定时器事件中补充可写监听。
-            client_events |= EPOLLOUT;
-        }
-        UpdateEpollEvents(client.first, client_events);
-    }
-
-    // timerfd 只负责定时触发，会议超时清理由 LogicSystem 的工作线程串行处理。
+    // timerfd 只负责触发扫描，清理候选进入所属会议的串行队列重新核验。
     LogicSystem::GetInstance()->PostReconnectTimeoutCheck();
 }
 
-void CServer::CloseClient(int client_fd)
+void CServer::CloseClient(std::uint64_t token)
 {
-    const auto session_it = m_client_fds.find(client_fd);
-    if (session_it == m_client_fds.end()) {
+    const auto it = m_sessions.find(token);
+    if (it == m_sessions.end()) {
         return;
     }
-
-    // 关闭 fd 前保留对应的 Session。LogicSystem 通过该对象身份清理会议连接，
-    // 不依赖可能被系统复用的 fd 数字。
-    const std::shared_ptr<Session> session = session_it->second;
-    m_client_fds.erase(session_it);
-
-    ::epoll_ctl(m_epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
-    ::close(client_fd);
-
-    // 未入会连接不涉及房间状态，无需唤醒逻辑线程。
-    if (session->GetMeetingId() != 0) {
-        LogicSystem::GetInstance()->PostSessionDisconnected(session);
-    }
-    std::cout << "客户端已断开，fd=" << client_fd << std::endl;
+    const auto session = it->second;
+    const int fd = session->GetFd();
+    session->Close();
+    m_sessions.erase(it);
+    ::epoll_ctl(m_epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+    ::close(fd);
+    // I/O 不读取由业务线程修改的 MeetingId；是否需要清理由业务入口判断。
+    LogicSystem::GetInstance()->PostSessionDisconnected(session);
+    std::cout << "客户端已断开，fd=" << fd << std::endl;
 }
 
-
-void CServer::AddToEpoll(int fd, std::uint32_t events)
+void CServer::AddToEpoll(int fd, std::uint32_t events, std::uint64_t token)
 {
     epoll_event event{};
     event.events = events;
-    event.data.fd = fd;
+    event.data.u64 = token;
     if (::epoll_ctl(m_epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
         throw MakeSystemError("注册 epoll 事件失败");
     }
 }
 
-void CServer::UpdateEpollEvents(int fd, std::uint32_t events)
+void CServer::Shutdown()
 {
-    epoll_event event{};
-    event.events = events;
-    event.data.fd = fd;
-    if (::epoll_ctl(m_epoll_fd, EPOLL_CTL_MOD, fd, &event) == -1) {
-        throw MakeSystemError("更新 epoll 事件失败");
+    if (m_wakeup) {
+        m_wakeup->RequestStop();
+    }
+    m_media_client.Stop();
+    while (!m_sessions.empty()) {
+        CloseClient(m_sessions.begin()->first);
+    }
+    if (m_timer_fd != -1) {
+        ::close(m_timer_fd);
+        m_timer_fd = -1;
+    }
+    if (m_signal_fd != -1) {
+        ::close(m_signal_fd);
+        m_signal_fd = -1;
+    }
+    if (m_listen_fd != -1) {
+        ::close(m_listen_fd);
+        m_listen_fd = -1;
+    }
+    if (m_epoll_fd != -1) {
+        ::close(m_epoll_fd);
+        m_epoll_fd = -1;
+    }
+    if (m_wakeup) {
+        m_wakeup->Close();
     }
 }

@@ -23,6 +23,8 @@ RUN test "${TARGETARCH}" = "amd64" \
         libboost-filesystem-dev \
         libboost-system-dev \
         libboost-thread-dev \
+        libboost-coroutine-dev \
+        libboost-context-dev \
         libcrypt-dev \
         libgrpc++-dev \
         libhiredis-dev \

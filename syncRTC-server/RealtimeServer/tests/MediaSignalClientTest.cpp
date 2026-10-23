@@ -1,4 +1,5 @@
 #include "net/MediaSignalClient.h"
+#include "net/CServer.h"
 #include "service/LogicSystem.h"
 
 #include <array>
@@ -7,10 +8,14 @@
 #include <cstring>
 #include <future>
 #include <iostream>
+#include <json/json.h>
 #include <stdexcept>
 #include <vector>
 
+#include <arpa/inet.h>
 #include <poll.h>
+#include <sys/epoll.h>
+#include <sys/timerfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -129,6 +134,33 @@ struct Events
     std::vector<Entry> events;
 };
 
+// 测试沿用真实 CServer 循环驱动 UDS，生产 MediaSignalClient 自身没有线程。
+struct ServerRunner
+{
+    explicit ServerRunner(MediaSignalClient& client) : server(0, client) {}
+    ~ServerRunner()
+    {
+        server.Stop();
+        if (running.valid()) {
+            running.wait();
+        }
+    }
+    void Start(const std::string& path)
+    {
+        server.Start(path);
+        running = std::async(std::launch::async, [&] { server.Run(); });
+    }
+    void Stop()
+    {
+        server.Stop();
+        if (running.valid()) {
+            running.get();
+        }
+    }
+    CServer server;
+    std::future<void> running;
+};
+
 void TestReconnectAndFrames()
 {
     Listener listener;
@@ -136,8 +168,9 @@ void TestReconnectAndFrames()
     MediaSignalClient client([&](auto type, auto epoch, auto message) {
         events.Push(type, epoch, std::move(message));
     });
+    ServerRunner loop(client);
     // Media 尚未监听也能启动，随后服务上线自动连通。
-    client.Start(listener.path);
+    loop.Start(listener.path);
     Expect(!client.Send(1, "offline"), "离线时接受了发送");
     listener.Open();
     int peer = listener.Accept();
@@ -189,7 +222,7 @@ void TestReconnectAndFrames()
     peer = listener.Accept();
     events.Wait(MediaSignalClient::Event::Connected, 5);
     Expect(client.Send(5, "after-errors") && ReadFrame(peer) == "after-errors", "失败后恢复收发错误");
-    client.Stop();
+    loop.Stop();
     ::close(peer);
 }
 
@@ -200,12 +233,13 @@ void TestStop()
     MediaSignalClient client([&](auto type, auto epoch, auto message) {
         events.Push(type, epoch, std::move(message));
     });
-    client.Start(listener.path);
+    ServerRunner loop(client);
+    loop.Start(listener.path);
     const auto start = std::chrono::steady_clock::now();
-    client.Stop();
+    loop.Stop();
     Expect(std::chrono::steady_clock::now() - start < std::chrono::seconds(1), "重连等待未被退出唤醒");
     listener.Open();
-    client.Start(listener.path);
+    loop.Start(listener.path);
     const int peer = listener.Accept();
     events.Wait(MediaSignalClient::Event::Connected, 1);
     Expect(client.Send(1, std::string(2 * 1024 * 1024, 'x')), "退出测试的大帧未入队");
@@ -216,9 +250,9 @@ void TestStop()
         while (client.Send(1, std::string(64 * 1024, 'x'))) {}
     });
     const auto stop_start = std::chrono::steady_clock::now();
-    client.Stop();
+    loop.Stop();
     sender.get();
-    client.Stop();
+    loop.Stop();
     Expect(!client.Send(1, "after-stop"), "退出后仍接受发送");
     Expect(std::chrono::steady_clock::now() - stop_start < std::chrono::seconds(1), "慢对端阻塞了退出");
     ::close(peer);
@@ -229,62 +263,303 @@ struct MediaSignalTestAccess
 {
     static void TestLogicEpochs()
     {
-        // 暂停业务消费，精确控制旧事件延迟；I/O 使用真实连接，业务判定使用生产函数。
         auto logic = std::shared_ptr<LogicSystem>(new LogicSystem);
-        {
-            std::lock_guard<std::mutex> lock(logic->m_mutex);
-            logic->m_stop = true;
-        }
-        logic->m_cond.notify_one();
-        logic->work_thread.join();
         Listener listener;
         listener.Open();
-        logic->StartMediaSignalClient(listener.path);
+        ServerRunner loop(logic->m_media_client);
+        loop.Start(listener.path);
         int peer = listener.Accept();
-        const auto next_event = [&]() {
-            std::unique_lock<std::mutex> lock(logic->m_mutex);
-            Expect(logic->m_cond.wait_for(lock, std::chrono::seconds(6), [&]() {
-                return !logic->m_msg_que.empty();
-            }), "业务队列没有收到 UDS 事件");
-            auto event = logic->m_msg_que.front();
-            logic->m_msg_que.pop();
-            return event;
+        const auto wait_for = [](const auto& predicate) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+            while (!predicate()) {
+                Expect(std::chrono::steady_clock::now() < until, "等待媒体代次变化超时");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         };
-        auto up = next_event();
-        logic->AcceptMediaEvent(*up);
-        auto session = std::make_shared<Session>(-1);
+        wait_for([&] { return logic->m_media_epoch == 1; });
+        int pair[2];
+        Expect(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0, "信令回包 socketpair 创建失败");
+        auto session = std::make_shared<Session>(pair[0]);
+        session->SetMeetingId(7);
         session->SetMediaSignalId(10);
-        logic->m_media_signal_sessions[10] = session;
-        Write(peer, EncodeFrame("old-response"));
-        auto old_response = next_event();
-        Expect(logic->AcceptMediaEvent(*old_response), "当前代次响应被拒绝");
+        const auto old_epoch = logic->RegisterSignal(10, session, 7);
+        LogicNode old_response{{}, 0xFFFC, "old-response", 1};
+        Expect(logic->AcceptMediaEvent(old_response), "当前代次响应被拒绝");
+
+        // 保持控制队列 active_op，验证断线通知尚未应用时 IsCurrent 已拒绝旧结果。
+        std::promise<std::function<void()>> paused;
+        logic->m_control->Submit([&](SerialCommandQueue::Operation& op) {
+            op.Wait([&](std::function<void()> resume) { paused.set_value(resume); });
+        });
+        auto resume = paused.get_future().get();
         ::close(peer);
-        auto down = next_event();
-        Expect(!logic->AcceptMediaEvent(*old_response), "断线通知处理前仍接受旧响应");
-        logic->AcceptMediaEvent(*down);
-        Expect(session->GetMediaSignalId() == 0 && logic->m_media_signal_sessions.empty(), "断线未清理媒体关联");
+        wait_for([&] { return !logic->m_media_client.IsCurrent(1); });
+        Expect(!logic->AcceptMediaEvent(old_response), "断线通知处理前仍接受旧响应");
+        resume();
+        logic->m_scheduler.WaitIdle();
+        Expect(session->GetMediaSignalId() == 0 && logic->FindSignal(10).epoch == 0,
+               "断线未清理媒体关联");
+
         peer = listener.Accept();
-        auto new_up = next_event();
-        logic->AcceptMediaEvent(*new_up);
-        Expect(new_up->media_epoch > up->media_epoch, "重连未更新代次");
+        wait_for([&] { return logic->m_media_epoch == 2; });
         session->SetMediaSignalId(20);
-        logic->m_media_signal_sessions[20] = session;
-        logic->AcceptMediaEvent(*down);
-        logic->AcceptMediaEvent(*up);
-        Expect(!logic->AcceptMediaEvent(*old_response), "重连后接受了旧响应");
-        Expect(session->GetMediaSignalId() == 20 && logic->m_media_signal_sessions.count(20) == 1,
+        logic->RegisterSignal(20, session, 7);
+        LogicNode old_up{{}, 0xFFFB, "", 1};
+        LogicNode old_down{{}, 0xFFFA, "", 1};
+        logic->AcceptMediaEvent(old_down);
+        logic->AcceptMediaEvent(old_up);
+        Expect(!logic->AcceptMediaEvent(old_response), "重连后接受了旧响应");
+        Expect(session->GetMediaSignalId() == 20 && logic->FindSignal(20).epoch == 2,
                "旧连接事件清理了新媒体关联");
-        Write(peer, EncodeFrame("new-response"));
-        Expect(logic->AcceptMediaEvent(*next_event()), "新连接响应未被接受");
-        Expect(logic->SendMediaSignal("new-request") && ReadFrame(peer) == "new-request", "业务发送未使用新代次");
-        logic->m_media_client.Stop();
+        LogicNode fresh{{}, 0xFFFC, "new-response", 2};
+        Expect(logic->AcceptMediaEvent(fresh), "新连接响应未被接受");
+        Expect(!logic->SendMediaSignal("stale-request", old_epoch), "重连后业务发送错误使用了新的通道代次");
+        Expect(logic->SendMediaSignal("new-request", 2) && ReadFrame(peer) == "new-request",
+               "业务发送未使用新代次");
+        Write(peer, EncodeFrame(R"({"signal_id":20,"signal_type":"answer","sdp":"fresh-sdp"})"));
+        wait_for([&] { return session->HasPendingWrite(); });
+        Expect(session->HandleWrite(), "会议队列中的媒体响应未送回 TCP");
+        std::array<unsigned char, 4> header{};
+        Read(pair[1], reinterpret_cast<char*>(header.data()), header.size());
+        std::string answer((header[2] << 8U) | header[3], '\0');
+        Read(pair[1], answer.data(), answer.size());
+        Json::Reader reader;
+        Json::Value json;
+        Expect(((header[0] << 8U) | header[1]) == ID_MEDIA_ANSWER_RESPONSE &&
+            reader.parse(answer, json) && json["sdp"].asString() == "fresh-sdp", "媒体响应路由或内容错误");
+
+        // 旧结果已通过控制层校验，但仍在会议 commands 中等待；重连后必须再次校验。
+        std::promise<std::function<void()>> room_paused;
+        Expect(logic->SubmitRoom(7, [&](auto& op, auto&) {
+            op.Wait([&](auto done) { room_paused.set_value(done); });
+        }), "无法暂停目标会议");
+        auto resume_room = room_paused.get_future().get();
+        const auto flush_control = [&] {
+            std::promise<void> barrier;
+            Expect(logic->m_control->Submit([&](auto&) { barrier.set_value(); }), "控制屏障提交失败");
+            barrier.get_future().wait();
+        };
+        logic->PostMediaEvent(MediaSignalClient::Event::Message, 2,
+            R"({"signal_id":20,"signal_type":"answer","sdp":"queued-old-sdp"})");
+        flush_control();
         ::close(peer);
+        wait_for([&] { return !logic->m_media_client.IsCurrent(2); });
+        peer = listener.Accept();
+        wait_for([&] { return logic->m_media_epoch == 3; });
+        session->SetMediaSignalId(30);
+        logic->RegisterSignal(30, session, 7);
+        logic->PostMediaEvent(MediaSignalClient::Event::Message, 3,
+            R"({"signal_id":30,"signal_type":"answer","sdp":"current-sdp"})");
+        flush_control();
+        resume_room();
+        logic->m_scheduler.WaitIdle();
+        Expect(session->HandleWrite(), "新代次会议回包失败");
+        Read(pair[1], reinterpret_cast<char*>(header.data()), header.size());
+        answer.assign((header[2] << 8U) | header[3], '\0');
+        Read(pair[1], answer.data(), answer.size());
+        Expect(reader.parse(answer, json) && json["sdp"].asString() == "current-sdp",
+               "旧媒体结果在会议排队期间跨越重连后仍被应用");
+        loop.Stop();
+        logic->m_scheduler.WaitIdle();
+        session->Close();
+        ::close(pair[0]);
+        ::close(pair[1]);
+        ::close(peer);
+    }
+
+};
+
+
+struct SingleIoTestAccess
+{
+    struct Socket
+    {
+        int fd = -1;
+        ~Socket() { if (fd != -1) ::close(fd); }
+    };
+
+    static std::string TcpFrame(std::uint16_t type, const std::string& body)
+    {
+        std::string frame(4, '\0');
+        frame[0] = static_cast<char>(type >> 8U);
+        frame[1] = static_cast<char>(type);
+        frame[2] = static_cast<char>(body.size() >> 8U);
+        frame[3] = static_cast<char>(body.size());
+        return frame + body;
+    }
+
+    static bool Readable(int fd)
+    {
+        pollfd descriptor{fd, POLLIN, 0};
+        return ::poll(&descriptor, 1, 0) > 0 && (descriptor.revents & POLLIN);
+    }
+
+    static void TestWakeupBatches()
+    {
+        IoWakeup wakeup;
+        for (std::uint64_t token = 1; token <= 130; ++token) {
+            Expect(wakeup.Notify(token) && wakeup.Notify(token), "唤醒提交失败");
+        }
+        std::uint64_t next = 1;
+        while (next <= 130) {
+            Expect(Readable(wakeup.GetFd()), "批次之间丢失了唤醒");
+            const auto batch = wakeup.Take();
+            Expect(!batch.empty() && batch.size() <= 64, "唤醒批次未受限");
+            for (const auto token : batch) {
+                Expect(token == next++, "唤醒未合并或违反 FIFO");
+            }
+        }
+        Expect(!Readable(wakeup.GetFd()), "空队列仍产生忙循环");
+        wakeup.RequestStop();
+        Expect(Readable(wakeup.GetFd()) && !wakeup.Notify(1), "停止未唤醒或仍接纳新提交");
+    }
+
+    static void TestUnifiedLoop()
+    {
+        Listener listener;
+        listener.Open();
+        std::uint64_t connected_epoch = 0;
+        std::uint64_t disconnected_epoch = 0;
+        std::vector<std::thread::id> callback_threads;
+        MediaSignalClient client([&](auto event, auto epoch, auto) {
+            callback_threads.push_back(std::this_thread::get_id());
+            if (event == MediaSignalClient::Event::Connected) connected_epoch = epoch;
+            if (event == MediaSignalClient::Event::Disconnected) disconnected_epoch = epoch;
+        });
+        CServer server(0, client);
+        server.Start(listener.path);
+        // 关闭周期定时器，验证响应依靠真实 eventfd，而不是定时扫描偶然发出。
+        const itimerspec disabled{};
+        Expect(::timerfd_settime(server.m_timer_fd, 0, &disabled, nullptr) == 0, "停用测试定时器失败");
+        const auto pump_until = [&](const auto& predicate) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (!predicate()) {
+                Expect(std::chrono::steady_clock::now() < deadline, "单 I/O 循环未能及时推进");
+                server.RunOnce(20);
+            }
+        };
+        pump_until([&] { return connected_epoch == 1; });
+        Socket media_peer{listener.Accept()};
+        sockaddr_in address{};
+        socklen_t length = sizeof(address);
+        Expect(::getsockname(server.m_listen_fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+               "读取临时 TCP 端口失败");
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        const auto connect_tcp = [&](Socket& peer) {
+            peer.fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+            Expect(peer.fd != -1 && ::connect(peer.fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0,
+                   "连接测试 TCP 失败");
+            timeval timeout{3, 0};
+            ::setsockopt(peer.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            pump_until([&] { return !server.m_sessions.empty(); });
+        };
+        Socket tcp_peer;
+        connect_tcp(tcp_peer);
+        const auto old_token = server.m_sessions.begin()->first;
+        const auto session = server.m_sessions.begin()->second;
+        // 没有新的 TCP 可读事件，异步业务响应仍必须唤醒唯一 I/O 线程。
+        Expect(std::async(std::launch::async, [&] { return session->Send(2001, "wake"); }).get(),
+               "异步 TCP 响应未被接纳");
+        pump_until([&] { return Readable(tcp_peer.fd); });
+        std::string actual(8, '\0');
+        Read(tcp_peer.fd, actual.data(), actual.size());
+        Expect(actual == TcpFrame(2001, "wake"), "TCP 唤醒或组帧错误");
+
+        // UDS 对端停止读，大帧产生背压；TCP 的解析、业务回投与发送仍须推进。
+        Expect(client.Send(1, std::string(2 * 1024 * 1024, 'x')), "UDS 大帧未入队");
+        for (int i = 0; i < 32; ++i) server.RunOnce(0);
+        std::array<char, 4> partial_header{};
+        Read(media_peer.fd, partial_header.data(), partial_header.size());
+        Write(tcp_peer.fd, TcpFrame(ID_AI_ASK_REQUEST, "{}"));
+        pump_until([&] { return Readable(tcp_peer.fd); });
+        std::array<unsigned char, 4> header{};
+        Read(tcp_peer.fd, reinterpret_cast<char*>(header.data()), header.size());
+        const auto type = static_cast<std::uint16_t>((header[0] << 8U) | header[1]);
+        std::string reply((header[2] << 8U) | header[3], '\0');
+        Read(tcp_peer.fd, reply.data(), reply.size());
+        Json::Value json;
+        Json::Reader reader;
+        Expect(type == ID_AI_ASK_RESPONSE && reader.parse(reply, json) &&
+               json["error"].asInt() == ErrorCodes::ERROR_TOKEN, "UDS 背压阻塞了 TCP 业务响应");
+
+        // 缩小发送缓冲，真实触发 TCP 部分写，并核对所有帧的完整字节顺序。
+        const int send_buffer = 4096;
+        ::setsockopt(session->GetFd(), SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
+        std::string expected;
+        for (int i = 0; i < 40; ++i) {
+            const std::string body(20000, static_cast<char>('a' + i % 26));
+            Expect(session->Send(2002, body), "TCP 分片测试入队失败");
+            expected += TcpFrame(2002, body);
+        }
+        auto received = std::async(std::launch::async, [&] {
+            std::string data(expected.size(), '\0');
+            Read(tcp_peer.fd, data.data(), data.size());
+            return data;
+        });
+        pump_until([&] { return received.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; });
+        Expect(received.get() == expected, "TCP 部分写造成帧交错或数据丢失");
+
+        // 不运行循环时精确填满提交队列，检查帧数上限与关闭反馈。
+        for (int i = 0; i < 1024; ++i) Expect(session->Send(2003, ""), "TCP 队列提前达到上限");
+        Expect(!session->Send(2003, "overflow"), "TCP 发送队列没有上限");
+        pump_until([&] { return server.m_sessions.empty(); });
+        Expect(!session->Send(2004, "late"), "旧 Session 关闭后仍接受响应");
+        ::close(tcp_peer.fd);
+        tcp_peer.fd = -1;
+        connect_tcp(tcp_peer);
+        const auto new_session = server.m_sessions.begin()->second;
+        server.m_wakeup->Notify(old_token); // 模拟已排队的旧连接唤醒。
+        Expect(new_session->Send(2004, "new"), "新连接响应未入队");
+        pump_until([&] { return Readable(tcp_peer.fd); });
+        actual.assign(7, '\0');
+        Read(tcp_peer.fd, actual.data(), actual.size());
+        Expect(actual == TcpFrame(2004, "new"), "旧通知影响了新连接");
+
+        // socketpair 确保数据和 FIN 在一次轮询前全部就绪，稳定覆盖超过读取预算的尾包。
+        int pair[2];
+        Expect(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair) == 0,
+               "创建 FIN 测试连接失败");
+        Socket fin_peer{pair[1]};
+        const auto fin_token = server.m_next_token++;
+        auto fin_session = std::make_shared<Session>(pair[0], server.m_wakeup, fin_token);
+        server.AddToEpoll(pair[0], EPOLLIN | EPOLLRDHUP, fin_token);
+        server.m_sessions.emplace(fin_token, fin_session);
+        const auto tail = TcpFrame(2006, std::string(60000, 'a')) + TcpFrame(2006, std::string(60000, 'b'));
+        Write(fin_peer.fd, tail);
+        Expect(::shutdown(fin_peer.fd, SHUT_WR) == 0, "发送 FIN 失败");
+        server.RunOnce(0);
+        Expect(server.m_sessions.count(fin_token) == 1, "读取预算耗尽后因 FIN 提前关闭，丢失尾部数据");
+        pump_until([&] { return server.m_sessions.count(fin_token) == 0; });
+
+        // 配额必须包含已取走但尚未写完的 UDS 帧，而非仅计算队列长度。
+        Expect(!client.Send(1, std::string(2 * 1024 * 1024, 'y')), "在途 UDS 帧未计入字节上限");
+        Expect(!client.IsCurrent(1), "UDS 超额没有立即失效代次");
+        pump_until([&] { return disconnected_epoch == 1; });
+        ::close(media_peer.fd);
+        media_peer.fd = -1;
+        pump_until([&] { return connected_epoch == 2; });
+        media_peer.fd = listener.Accept();
+        Expect(client.Send(2, "fresh"), "重连后无法发送");
+        pump_until([&] { return Readable(media_peer.fd); });
+        Expect(ReadFrame(media_peer.fd) == "fresh", "旧 UDS 帧被带到新连接");
+        for (int i = 0; i < 1024; ++i) Expect(client.Send(2, ""), "UDS 帧数配额提前耗尽");
+        Expect(!client.Send(2, "overflow"), "UDS 1024 帧上限失效");
+        pump_until([&] { return disconnected_epoch == 2; });
+        Expect(!callback_threads.empty(), "没有 UDS 回调");
+        for (const auto id : callback_threads) {
+            Expect(id == std::this_thread::get_id(), "UDS 事件未由 TCP 所属循环执行");
+        }
+        server.Shutdown();
+        Expect(!new_session->Send(2005, "after-stop") && !client.Send(2, "after-stop"),
+               "退出后仍接受发送");
     }
 };
 
 int main()
 {
     try {
+        SingleIoTestAccess::TestWakeupBatches();
+        SingleIoTestAccess::TestUnifiedLoop();
         TestReconnectAndFrames();
         TestStop();
         MediaSignalTestAccess::TestLogicEpochs();
