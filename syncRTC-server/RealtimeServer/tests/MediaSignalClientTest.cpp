@@ -296,6 +296,8 @@ struct MediaSignalTestAccess
         wait_for([&] { return !logic->m_media_client.IsCurrent(1); });
         Expect(!logic->AcceptMediaEvent(old_response), "断线通知处理前仍接受旧响应");
         resume();
+        // IsCurrent 先失效，I/O 随后才投递断线事件；队列瞬时空闲不代表清理已完成。
+        wait_for([&] { return session->GetMediaSignalId() == 0 && logic->FindSignal(10).epoch == 0; });
         logic->m_scheduler.WaitIdle();
         Expect(session->GetMediaSignalId() == 0 && logic->FindSignal(10).epoch == 0,
                "断线未清理媒体关联");

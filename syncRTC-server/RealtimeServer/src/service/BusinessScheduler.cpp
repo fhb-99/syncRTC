@@ -147,6 +147,8 @@ void SerialCommandQueue::Operation::Wait(std::function<void(std::function<void()
     const auto phase = ++m_phase;
     m_queue.m_phase = phase;
     auto queue = m_queue.shared_from_this();
+    // Boost 1.74 会移动非引用类型的 completion token；不能消耗后续阶段复用的上下文。
+    auto yield = m_yield;
     boost::asio::async_initiate<boost::asio::yield_context, void()>(
         [queue, id = m_id, phase, initiate = std::move(initiate)](auto handler) mutable {
             auto completion = std::make_shared<decltype(handler)>(std::move(handler));
@@ -158,5 +160,5 @@ void SerialCommandQueue::Operation::Wait(std::function<void(std::function<void()
                     if (queue->m_active_op == id && queue->m_phase == phase) (*completion)();
                 });
             });
-        }, m_yield);
+        }, yield);
 }

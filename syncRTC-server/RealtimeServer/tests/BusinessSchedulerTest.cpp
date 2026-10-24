@@ -1,5 +1,6 @@
 #include "service/BusinessScheduler.h"
 #include <array>
+#include <cstdlib>
 #include <future>
 #include <iostream>
 
@@ -69,6 +70,30 @@ void TestConcurrentProducers()
     scheduler.WaitIdle();
     Expect(!concurrent, "同一会议发生并发执行");
     for (const auto& count : completed) Expect(count == producers * each, "休眠/唤醒竞争导致丢任务");
+}
+
+void TestRepeatedWaits()
+{
+    BusinessScheduler scheduler(1);
+    auto queue = std::make_shared<SerialCommandQueue>(scheduler);
+    std::atomic<int> phases{0};
+    std::promise<void> done;
+    // 每次立即报告完成，但仍经 strand 恢复；覆盖旧版 Boost 重复使用 token 的路径。
+    Expect(queue->Submit([&](auto& op) {
+        for (int i = 0; i < 64; ++i) {
+            op.Wait([](auto resume) { resume(); resume(); });
+            Expect(op.Phase() == static_cast<std::uint64_t>(i + 1), "等待阶段没有递增");
+            ++phases;
+        }
+    }), "多阶段命令入队失败");
+    Expect(queue->Submit([&](auto&) { done.set_value(); }), "后续命令入队失败");
+    if (done.get_future().wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+        // 队列卡死时析构也会等待；直接失败，让 CI 保留明确诊断而不是只报告超时。
+        std::cerr << "连续等待后会议队列未恢复，已完成阶段=" << phases << std::endl;
+        std::_Exit(1);
+    }
+    scheduler.WaitIdle();
+    Expect(phases == 64, "重复完成导致阶段丢失或重复执行");
 }
 
 void TestRejectionExceptionsAndDuplicateCompletion()
@@ -155,10 +180,17 @@ void TestCapacityAndTerminal()
 int main()
 {
     try {
+        std::cout << "TestRepeatedWaits" << std::endl;
+        TestRepeatedWaits();
+        std::cout << "TestResumeAndOrder" << std::endl;
         TestResumeAndOrder();
+        std::cout << "TestConcurrentProducers" << std::endl;
         TestConcurrentProducers();
+        std::cout << "TestRejectionExceptionsAndDuplicateCompletion" << std::endl;
         TestRejectionExceptionsAndDuplicateCompletion();
+        std::cout << "TestDifferentRoomsParallel" << std::endl;
         TestDifferentRoomsParallel();
+        std::cout << "TestCapacityAndTerminal" << std::endl;
         TestCapacityAndTerminal();
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
