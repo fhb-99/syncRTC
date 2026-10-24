@@ -25,9 +25,12 @@ endforeach()
 
 set(REALTIME_LOGIC_SOURCES
     src/config/ConfigMgr.cpp
+    src/net/IoWakeup.cpp
     src/net/Session.cpp
     src/net/MediaSignalClient.cpp
     src/service/LogicSystem.cpp
+    src/service/LogicDispatch.cpp
+    src/service/BusinessScheduler.cpp
     src/storage/RedisMgr.cpp
     src/storage/MySqlMgr.cpp
     src/common/meeting_ai.pb.cc
@@ -42,7 +45,7 @@ set(REAL_SERVER_SOURCES
 
 add_executable(RealtimeServer ${REAL_SERVER_SOURCES})
 
-find_package(Boost REQUIRED COMPONENTS filesystem system)
+find_package(Boost REQUIRED COMPONENTS filesystem system coroutine context)
 find_package(Threads REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
@@ -84,6 +87,8 @@ set(REALTIME_LOGIC_LIBRARIES
     Threads::Threads
     Boost::filesystem
     Boost::system
+    Boost::coroutine
+    Boost::context
     JsonCpp::JsonCpp
     gRPC::grpc++
     protobuf::libprotobuf
@@ -123,8 +128,33 @@ add_custom_command(TARGET RealtimeServer POST_BUILD
 )
 
 if(BUILD_TESTING)
+    add_executable(storage_pool_test tests/StoragePoolTest.cpp)
+    target_include_directories(storage_pool_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(storage_pool_test PRIVATE Threads::Threads MySQL::ConnectorCpp)
+    add_test(NAME storage_pool_test COMMAND storage_pool_test)
+    set_tests_properties(storage_pool_test PROPERTIES TIMEOUT 10)
+
+    add_executable(shutdown_signal_test tests/ShutdownSignalTest.cpp src/net/CServer.cpp ${REALTIME_LOGIC_SOURCES})
+    target_compile_definitions(shutdown_signal_test PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(shutdown_signal_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(shutdown_signal_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
+    add_test(NAME shutdown_signal_test COMMAND shutdown_signal_test)
+    set_tests_properties(shutdown_signal_test PROPERTIES TIMEOUT 20)
+
+    add_executable(business_scheduler_test tests/BusinessSchedulerTest.cpp src/service/BusinessScheduler.cpp)
+    target_include_directories(business_scheduler_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(business_scheduler_test PRIVATE Threads::Threads Boost::system Boost::coroutine Boost::context)
+    add_test(NAME business_scheduler_test COMMAND business_scheduler_test)
+    set_tests_properties(business_scheduler_test PROPERTIES TIMEOUT 20)
+    add_executable(logic_dispatch_test tests/LogicDispatchTest.cpp ${REALTIME_LOGIC_SOURCES})
+    target_compile_definitions(logic_dispatch_test PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(logic_dispatch_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(logic_dispatch_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
+    add_test(NAME logic_dispatch_test COMMAND logic_dispatch_test)
+    set_tests_properties(logic_dispatch_test PROPERTIES TIMEOUT 20)
     add_executable(media_signal_client_test
         tests/MediaSignalClientTest.cpp
+        src/net/CServer.cpp
         ${REALTIME_LOGIC_SOURCES}
     )
     target_compile_definitions(media_signal_client_test PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

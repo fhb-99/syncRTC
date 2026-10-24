@@ -2,35 +2,46 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
-
 #include "net/Session.h"
+#include "net/MediaSignalClient.h"
 
 class CServer
 {
+    friend struct SingleIoTestAccess;
 public:
-    explicit CServer(unsigned short port);
+    CServer(unsigned short port, MediaSignalClient& media_client);
     ~CServer();
-
     CServer(const CServer&) = delete;
     CServer& operator=(const CServer&) = delete;
 
-    // 创建监听 socket、epoll 和 timerfd。
-    void Start();
-
-    // 只处理连接接入、连接断开和定时器事件，不处理客户端业务数据。
+    // main 必须在创建任何工作线程前屏蔽 SIGTERM/SIGINT，使其由此循环的 signalfd 接收。
+    // 运行前创建监听 socket、epoll、timerfd、signalfd 与共享唤醒通道。
+    void Start(const std::string& media_socket_path);
+    // TCP 与 UDS 都由调用 Run 的线程处理；业务仍交给 LogicSystem。
     void Run();
+    // 可跨线程请求退出；真正关闭 fd 在 Run 所属线程进行。
+    void Stop();
 
 private:
+    void RunOnce(int max_wait_ms = -1);
+    void Shutdown();
     void AcceptClients();
     void HandleTimer();
-    void CloseClient(int client_fd);
-    void AddToEpoll(int fd, std::uint32_t events);
-    void UpdateEpollEvents(int fd, std::uint32_t events);
+    void HandleWakeup();
+    void CloseClient(std::uint64_t token);
+    void UpdateClient(std::uint64_t token, const std::shared_ptr<Session>& session);
+    void AddToEpoll(int fd, std::uint32_t events, std::uint64_t token);
 
     unsigned short m_port;
-    int m_listen_fd;
-    int m_epoll_fd;
-    int m_timer_fd;
-    std::unordered_map<int, std::shared_ptr<Session>> m_client_fds;
+    MediaSignalClient& m_media_client;
+    int m_listen_fd = -1;
+    int m_epoll_fd = -1;
+    int m_timer_fd = -1;
+    int m_signal_fd = -1;
+    std::shared_ptr<IoWakeup> m_wakeup;
+    // 身份不会随 fd 复用，唤醒与缓存的 epoll 事件都按此身份校验。
+    std::uint64_t m_next_token = 5;
+    std::unordered_map<std::uint64_t, std::shared_ptr<Session>> m_sessions;
 };

@@ -1,6 +1,8 @@
 #pragma once
 
+#include "net/IoWakeup.h"
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -18,7 +20,7 @@ struct Frame
 class Session : public std::enable_shared_from_this<Session>
 {
 public:
-    explicit Session(int fd);
+    explicit Session(int fd, std::shared_ptr<IoWakeup> wakeup = {}, std::uint64_t token = 0);
 
     int GetFd() const;
 
@@ -33,6 +35,7 @@ public:
     // 一次 offer 协商对应一个内部 signal_id，后续 ICE candidate 沿用该标识返回原连接。
     void SetMediaSignalId(std::uint64_t signal_id);
     std::uint64_t GetMediaSignalId() const;
+    void ClearMediaSignalId(std::uint64_t expected);
 
     // 读取并解析 Qt 客户端的 4 字节帧头，完整帧直接投递到 LogicSystem。
     bool HandleRead();
@@ -41,24 +44,36 @@ public:
     bool Send(std::uint16_t request_id, const std::string& payload);
     bool HandleWrite();
     bool HasPendingWrite() const;
+    // 仅由 I/O 线程失效连接；迟到的业务发送返回 false。
+    void Close();
+    void RequestClose();
+    bool IsClosed() const;
 
 private:
     void ParseFrames();
 
     // fd 的关闭由 CServer 统一负责，Session 只使用它进行收发。
     int m_fd;
+    const std::shared_ptr<IoWakeup> m_wakeup;
+    const std::uint64_t m_token;
     // 未登录连接保持为 0。
-    int m_user_id;
+    std::atomic<int> m_user_id;
     // 未进入会议时保持为 0；离会/断线清理后也应重置为 0。
-    std::uint64_t m_meeting_id;
+    std::atomic<std::uint64_t> m_meeting_id;
     // 最近一次媒体 offer 的内部关联标识，未协商时为 0。
-    std::uint64_t m_media_signal_id;
+    std::atomic<std::uint64_t> m_media_signal_id;
     // 半包会暂存在这里，直到凑齐一个完整帧。
     std::string m_receive_buffer;
+    // 生产者只提交不可变完整帧；真正的发送队列和偏移仅由 I/O 访问。
+    std::deque<std::string> m_pending;
+    std::size_t m_pending_bytes = 0;
+    std::size_t m_pending_frames = 0;
+    bool m_closed = false;
+    bool m_close_requested = false;
     // 非阻塞 send 未发完的数据按顺序保留在队列中。
     std::deque<std::string> m_send_queue;
     // 当前队首消息已经发送的字节数。
     std::size_t m_send_offset;
-    // 逻辑线程与 I/O 线程都会访问发送队列，需要保护队列状态。
+    // 只保护提交队列、总配额和连接失效状态，不持锁执行 socket I/O。
     mutable std::mutex m_send_mutex;
 };

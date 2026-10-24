@@ -46,7 +46,7 @@ public:
     {
         try {
             for (int i = 0; i < poolSize_; ++i) {
-                sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
+                auto* driver = ThreadDriver();
                 auto*  con = driver->connect(url_, user_, pass_);
                 con->setSchema(schema_);
                 // 获取当前时间戳
@@ -67,13 +67,16 @@ public:
     }
 
     std::unique_ptr<SqlConnection> getConnection() {
+        // 连接会被不同慢任务 worker 依次借用；每个使用线程都要初始化驱动上下文。
+        auto* driver = ThreadDriver();
         std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this] {
+        // 尚未发起 SQL，借用超时可以安全失败；不能无限占着慢任务和会议 active_op。
+        const bool available = cond_.wait_for(lock, std::chrono::seconds(2), [this] {
             if (b_stop_) {
                 return true;
             }
             return !pool_.empty(); });
-        if (b_stop_) {
+        if (!available || b_stop_) {
             return nullptr;
         }
         std::unique_ptr<SqlConnection> con(std::move(pool_.front()));
@@ -91,7 +94,6 @@ public:
 
         if (!is_valid) {
             try {
-                sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
                 auto new_con = std::unique_ptr<sql::Connection>(driver->connect(url_, user_, pass_));
                 new_con->setSchema(schema_);
                 if (con) {
@@ -125,7 +127,8 @@ public:
     }
 
     void Close() {
-        b_stop_ = true;
+        // 与 wait 的谓词共用互斥锁，避免检查谓词与进入等待之间丢失关闭通知。
+        { std::lock_guard<std::mutex> lock(mutex_); b_stop_ = true; }
         cond_.notify_all();
     }
 
@@ -137,6 +140,17 @@ public:
     }
 
 private:
+    static sql::mysql::MySQL_Driver* ThreadDriver() {
+        // get_mysql_driver_instance 本身不保证并发安全，由局部静态初始化串行执行一次。
+        static auto* driver = sql::mysql::get_mysql_driver_instance();
+        struct ThreadContext {
+            explicit ThreadContext(sql::mysql::MySQL_Driver* value) : driver(value) { driver->threadInit(); }
+            ~ThreadContext() { driver->threadEnd(); }
+            sql::mysql::MySQL_Driver* driver;
+        };
+        thread_local ThreadContext context(driver);
+        return context.driver;
+    }
     std::string url_;
     std::string user_;
     std::string pass_;
