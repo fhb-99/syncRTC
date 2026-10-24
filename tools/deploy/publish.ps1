@@ -35,7 +35,7 @@ $serviceInfo = @{
     }
     realtime = @{
         Directory = 'RealtimeServer'; Binary = 'RealtimeServer'
-        Tests = '^(session_test|logic_system_test|meeting_info_test)$'
+        Tests = '^(session_test|logic_system_test|meeting_info_test|media_signal_client_test|business_scheduler_test|logic_dispatch_test|shutdown_signal_test|storage_pool_test)$'
     }
     media = @{
         Directory = 'MediaServer'; Binary = 'MediaServer'

@@ -3,6 +3,9 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <csignal>
+#include <cstring>
+#include <pthread.h>
 
 #include "config/ConfigMgr.h"
 #include "net/CServer.h"
@@ -10,6 +13,17 @@
 
 int main()
 {
+    // 必须先屏蔽，再创建业务/慢任务/gRPC 线程；所有线程继承屏蔽集，
+    // SIGTERM/SIGINT 由 CServer 的 signalfd 转成普通 I/O 事件处理。
+    sigset_t signals;
+    ::sigemptyset(&signals);
+    ::sigaddset(&signals, SIGTERM);
+    ::sigaddset(&signals, SIGINT);
+    const int signal_error = ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+    if (signal_error != 0) {
+        std::cerr << "屏蔽退出信号失败：" << std::strerror(signal_error) << std::endl;
+        return EXIT_FAILURE;
+    }
     try {
         const std::string port_text = ConfigMgr::Init()["RealtimeServer"]["Port"];
         if (port_text.empty()) {
@@ -40,11 +54,12 @@ int main()
             return EXIT_FAILURE;
         }
 
-        // 启动后台连接维护；Media 尚未启动时仍提供 TCP 服务，媒体请求暂时返回网络错误。
-        LogicSystem::GetInstance()->StartMediaSignalClient(media_socket_path);
-
-        CServer server(static_cast<unsigned short>(port_value));
-        server.Start();
+        // TCP 与 Media UDS 共用一个循环；Media 离线时仍接收客户端连接。
+        auto logic = LogicSystem::GetInstance();
+        // 声明在 server 前：正常返回和异常退出均先销毁 I/O，再排空业务。
+        Defer drain_business([logic] { logic->Shutdown(); });
+        CServer server(static_cast<unsigned short>(port_value), logic->GetMediaSignalClient());
+        server.Start(media_socket_path);
         server.Run();
     }
     catch (const std::exception& exception) {

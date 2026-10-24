@@ -1,6 +1,7 @@
 #include "net/Session.h"
 #include "service/LogicSystem.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <limits>
@@ -11,11 +12,16 @@
 namespace {
 
 constexpr std::size_t kFrameHeaderLength = sizeof(std::uint16_t) * 2;
+constexpr std::size_t kIoBudget = 64 * 1024;
+constexpr std::size_t kMaxPendingBytes = 4 * 1024 * 1024;
+constexpr std::size_t kMaxPendingFrames = 1024;
 
 } // namespace
 
-Session::Session(int fd)
+Session::Session(int fd, std::shared_ptr<IoWakeup> wakeup, std::uint64_t token)
     : m_fd(fd),
+      m_wakeup(std::move(wakeup)),
+      m_token(token),
       m_user_id(0),
       m_meeting_id(0),
       m_media_signal_id(0),
@@ -58,14 +64,34 @@ std::uint64_t Session::GetMediaSignalId() const
     return m_media_signal_id;
 }
 
+void Session::ClearMediaSignalId(std::uint64_t expected)
+{
+    m_media_signal_id.compare_exchange_strong(expected, 0);
+}
+
+bool Session::IsClosed() const
+{
+    std::lock_guard<std::mutex> lock(m_send_mutex);
+    return m_closed || m_close_requested;
+}
+
+void Session::RequestClose()
+{
+    std::lock_guard<std::mutex> lock(m_send_mutex);
+    m_close_requested = true;
+    if (m_wakeup) m_wakeup->Notify(m_token);
+}
+
 bool Session::HandleRead()
 {
     std::array<char, 4096> read_buffer{};
 
-    // 非阻塞 socket 需要一直读到 EAGAIN，避免遗漏本次 epoll 事件中的数据。
-    while (true) {
+    // 当前使用 LT：按批次让出循环，内核仍可读时下一轮继续。
+    std::size_t received = 0;
+    while (received < kIoBudget) {
         const ssize_t read_length = ::recv(m_fd, read_buffer.data(), read_buffer.size(), 0);
         if (read_length > 0) {
+            received += static_cast<std::size_t>(read_length);
             m_receive_buffer.append(read_buffer.data(), static_cast<std::size_t>(read_length));
             // 每次追加数据后立即尝试解帧，兼容半包和一次到达多个帧。
             ParseFrames();
@@ -84,6 +110,7 @@ bool Session::HandleRead()
         }
         return false;
     }
+    return true;
 }
 
 bool Session::Send(std::uint16_t request_id, const std::string& payload)
@@ -103,44 +130,81 @@ bool Session::Send(std::uint16_t request_id, const std::string& payload)
     message.replace(kFrameHeaderLength, payload.size(), payload);
 
     std::lock_guard<std::mutex> lock(m_send_mutex);
-    m_send_queue.push_back(std::move(message));
+    if (m_closed || m_close_requested) {
+        return false;
+    }
+    if (message.size() > kMaxPendingBytes - m_pending_bytes || m_pending_frames >= kMaxPendingFrames) {
+        // 慢客户端不能无限积压；失效连接，避免静默丢失关键状态通知后继续。
+        m_close_requested = true;
+        if (m_wakeup) {
+            m_wakeup->Notify(m_token);
+        }
+        return false;
+    }
+    m_pending_bytes += message.size();
+    ++m_pending_frames;
+    m_pending.push_back(std::move(message));
+    if (m_wakeup && !m_wakeup->Notify(m_token)) {
+        m_close_requested = true;
+        return false;
+    }
     return true;
 }
 
 bool Session::HandleWrite()
 {
-    std::lock_guard<std::mutex> lock(m_send_mutex);
-    while (!m_send_queue.empty()) {
-        std::string& message = m_send_queue.front();
-        // 非阻塞 send 可能只写出一部分，剩余部分由 m_send_offset 记录。
-        const ssize_t sent_length = ::send(
-            m_fd, message.data() + m_send_offset, message.size() - m_send_offset, MSG_NOSIGNAL);
-
-        if (sent_length > 0) {
-            m_send_offset += static_cast<std::size_t>(sent_length);
+    {
+        std::lock_guard<std::mutex> lock(m_send_mutex);
+        if (m_closed || m_close_requested) {
+            return false;
+        }
+        // 旧发送队列优先。未取走的提交会保持可写监听，不依赖再次 Notify。
+        if (m_send_queue.empty()) {
+            m_send_queue.swap(m_pending);
+        }
+    }
+    std::size_t written = 0;
+    while (!m_send_queue.empty() && written < kIoBudget) {
+        auto& message = m_send_queue.front();
+        const auto count = ::send(m_fd, message.data() + m_send_offset,
+            std::min(kIoBudget - written, message.size() - m_send_offset), MSG_NOSIGNAL);
+        if (count > 0) {
+            m_send_offset += static_cast<std::size_t>(count);
+            written += static_cast<std::size_t>(count);
             if (m_send_offset == message.size()) {
+                {
+                    std::lock_guard<std::mutex> lock(m_send_mutex);
+                    m_pending_bytes -= message.size();
+                    --m_pending_frames;
+                }
                 m_send_queue.pop_front();
                 m_send_offset = 0;
             }
             continue;
         }
-
-        if (sent_length == -1 && errno == EINTR) {
+        if (count == -1 && errno == EINTR) {
             continue;
         }
-        if (sent_length == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return true;
-        }
-        return false;
+        return count == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
     }
-
     return true;
 }
 
 bool Session::HasPendingWrite() const
 {
     std::lock_guard<std::mutex> lock(m_send_mutex);
-    return !m_send_queue.empty();
+    return m_close_requested || m_pending_frames != 0;
+}
+
+void Session::Close()
+{
+    std::lock_guard<std::mutex> lock(m_send_mutex);
+    m_closed = true;
+    m_pending.clear();
+    m_send_queue.clear();
+    m_pending_bytes = 0;
+    m_pending_frames = 0;
+    m_send_offset = 0;
 }
 
 void Session::ParseFrames()
@@ -150,6 +214,8 @@ void Session::ParseFrames()
         const auto* header = reinterpret_cast<const unsigned char*>(m_receive_buffer.data());
         const std::uint16_t request_id =
             static_cast<std::uint16_t>((header[0] << 8U) | header[1]);
+        // 内部收尾事件有预留接纳容量，不能允许客户端伪造内部事件绕过限流。
+        if (request_id >= 0xFFF0) { RequestClose(); return; }
         const std::uint16_t payload_length =
             static_cast<std::uint16_t>((header[2] << 8U) | header[3]);
         const std::size_t frame_length = kFrameHeaderLength + payload_length;
