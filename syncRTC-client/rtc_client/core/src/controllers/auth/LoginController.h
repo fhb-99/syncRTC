@@ -52,11 +52,13 @@ private:
     LoginMode m_loginMode = LoginMode::Password;
     bool m_rememberLoginRequested = false;
     bool m_hasRememberedSession = false;
+    bool m_connectPending = false;
 signals:
     void loginSucceeded(const QString& username, const QString& email);
     void loginFailed(const QString& reason);
     void rememberedSessionChanged();
     void rememberLoginWarning(const QString &reason);
+    void serverPrepared(ServerInfo);
     void signal_connect_tcp(ServerInfo);
 public slots:
     //  http

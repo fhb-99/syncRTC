@@ -1,5 +1,25 @@
 # Realtime 本地真实依赖联调
 
+## 心跳与业务恢复专项
+
+`run_heartbeat.py` 使用与 `run_recovery.py` 相同的 `--repo`、`--runtime`、`--output` 参数。
+先执行业务恢复一期回归，再验证 20 秒以上真实 SQL 表锁期间序号 PING/PONG 持续响应、
+心跳超时只产生一次断线通知、保留 45 秒恢复资格、重新鉴权与 RESUME、未鉴权半包超时和心跳限流。
+心跳每 5 秒发送，服务端静默期限仍为生产参数 20 秒；未缩短生产时间以加快联调。
+
+## 客户端业务恢复专项
+
+业务恢复专项使用 `run_recovery.py --repo <独立工作树> --runtime <依赖目录> --output <新输出目录>`。
+它只启动 MySQL、Redis、RealtimeServer，不需要 Media 或 Offer。覆盖密码会议票据恢复、活跃连接接管、
+重复请求、回包丢失、错误票据/设备会话、SQL/Redis 错误分类、快照顺序、心跳绕过慢查询、主动离会、
+会议结束、完整 45 秒过期和令牌撤销。结果写入 `results.json`，退出恢复配置并关闭自己启动的进程。
+
+输出和数据目录应放在该工作树的 `out/` 内。WSL 的 Windows 挂载盘可能不支持 Unix socket；
+可在工作树的 `out/wsl/` 临时挂载 tmpfs 后运行，结束后将结果与日志保存回 `out/` 普通目录并卸载。
+不要在构建服务端的同时运行，构建会覆盖测试所用的 `bin/conf/config.ini`。
+
+## 既有业务与媒体信令联调
+
 这组测试启动真实 MySQL、Redis、RealtimeServer、MediaServer 子进程，通过 TCP 协议请求和 SQL / Redis 查询交叉验证。只在专用独立工作树运行；不要对正在服务的 checkout 运行，也不要同时构建该目录（构建会复制配置）。
 
 ## 环境与运行

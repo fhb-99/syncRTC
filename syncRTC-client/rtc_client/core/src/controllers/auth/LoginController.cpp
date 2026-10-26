@@ -153,6 +153,8 @@ void LoginController::initHttpHandlers()
         }
 
         // HTTP 登录成功后，由 LoginController 触发 RealtimeServer 的 TCP 连接。
+        emit serverPrepared(m_server);
+        m_connectPending = true;
         emit signal_connect_tcp(m_server);
     });
 }
@@ -237,6 +239,9 @@ void LoginController::slot_login_mod_finish(RequestID reqID, QByteArray res, Err
 
 void LoginController::slot_connect_success(bool success)
 {
+    // 会中重连由 RecoveryController 鉴权，不能重复发送首次登录请求。
+    if (!m_connectPending) return;
+    m_connectPending = false;
     if (!success) {
         emit loginFailed("TCP 连接失败");
         qWarning() << "[LoginController] RealtimeServer TCP connection failed";

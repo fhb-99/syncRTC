@@ -80,6 +80,8 @@ private:
     std::unordered_map<int, std::unique_ptr<RemoteMediaReceiver>> m_remoteReceivers;
     bool m_cameraEnabled = false;
     bool m_microphoneEnabled = false;
+    // 停止后丢弃已排队的旧信令和远端帧；自动重建与完整媒体代次另行实现。
+    bool m_mediaStopped = true;
 };
 
 #endif // MEDIACONTROLLER_H

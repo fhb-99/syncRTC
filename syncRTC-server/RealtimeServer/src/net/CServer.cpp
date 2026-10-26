@@ -125,6 +125,7 @@ void CServer::RunOnce(int max_wait_ms)
 {
     m_media_client.Tick();
     int timeout = m_media_client.NextTimeoutMs();
+    if (m_heartbeat_scanning) timeout = 0;
     if (max_wait_ms >= 0 && (timeout < 0 || timeout > max_wait_ms)) {
         timeout = max_wait_ms;
     }
@@ -185,6 +186,7 @@ void CServer::RunOnce(int max_wait_ms)
     }
     // 同一循环推进连接超时、重连和由其他线程请求的通道失效/写监听。
     if (!m_wakeup->Stopping()) {
+        CheckHeartbeats();
         m_media_client.Tick();
     }
 }
@@ -270,8 +272,41 @@ void CServer::HandleTimer()
         std::cerr << "读取 timerfd 失败：" << std::strerror(errno) << std::endl;
     }
 
-    // timerfd 只负责触发扫描，清理候选进入所属会议的串行队列重新核验。
+    const auto now = std::chrono::steady_clock::now();
+    if (!m_heartbeat_scanning && !m_sessions.empty()) {
+        m_heartbeat_after = 0;
+        m_heartbeat_through = m_sessions.rbegin()->first;
+        m_heartbeat_scanning = true;
+        m_heartbeat_recheck = now - m_last_timer > std::chrono::seconds(5);
+    }
+    m_last_timer = now;
+    // 累积 tick 只启动一轮；成员宽限清理仍是独立的会议串行操作。
     LogicSystem::GetInstance()->PostReconnectTimeoutCheck();
+}
+
+void CServer::CheckHeartbeats()
+{
+    if (!m_heartbeat_scanning) return;
+    const auto now = std::chrono::steady_clock::now();
+    // 每轮最多 64 条，下一轮先继续处理 epoll，避免大量连接扫描独占 I/O。
+    for (unsigned checked = 0; checked < 64; ++checked) {
+        const auto it = m_sessions.upper_bound(m_heartbeat_after);
+        if (it == m_sessions.end() || it->first > m_heartbeat_through) {
+            m_heartbeat_scanning = false;
+            return;
+        }
+        const auto token = it->first;
+        const auto session = it->second;
+        m_heartbeat_after = token;
+        if (!session->ConnectionExpired(now)) continue;
+        // 定时事件可能排在可读事件前面；最终判定前先读已到达的完整 PING。
+        if (!session->HandleRead() || session->IsClosed() ||
+            session->ConnectionExpired(now, m_heartbeat_recheck)) {
+            CloseClient(token); // 复用 EOF/错误的关闭与唯一断线业务投递。
+        } else {
+            UpdateClient(token, session);
+        }
+    }
 }
 
 void CServer::CloseClient(std::uint64_t token)

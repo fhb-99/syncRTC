@@ -89,6 +89,10 @@ Window {
         id: meetingShell
 
         MeetingShell {
+            onReloginRequested: {
+                realtimeController.recoveryController.stop()
+                stackView.replace(loginPage)
+            }
             previewUsername: root.isUiPreviewMode ? root.previewUsername : ""
             previewEmail: root.isUiPreviewMode ? root.previewEmail : ""
         }

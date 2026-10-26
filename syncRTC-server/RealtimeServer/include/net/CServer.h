@@ -3,13 +3,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <map>
 #include "net/Session.h"
 #include "net/MediaSignalClient.h"
 
 class CServer
 {
     friend struct SingleIoTestAccess;
+    friend struct HeartbeatTestAccess;
 public:
     CServer(unsigned short port, MediaSignalClient& media_client);
     ~CServer();
@@ -29,6 +30,7 @@ private:
     void Shutdown();
     void AcceptClients();
     void HandleTimer();
+    void CheckHeartbeats();
     void HandleWakeup();
     void CloseClient(std::uint64_t token);
     void UpdateClient(std::uint64_t token, const std::shared_ptr<Session>& session);
@@ -43,5 +45,11 @@ private:
     std::shared_ptr<IoWakeup> m_wakeup;
     // 身份不会随 fd 复用，唤醒与缓存的 epoll 事件都按此身份校验。
     std::uint64_t m_next_token = 5;
-    std::unordered_map<std::uint64_t, std::shared_ptr<Session>> m_sessions;
+    // 有序 token 让扫描可跨轮继续，不保留会因插入/删除失效的迭代器。
+    std::map<std::uint64_t, std::shared_ptr<Session>> m_sessions;
+    std::uint64_t m_heartbeat_after = 0;
+    std::uint64_t m_heartbeat_through = 0;
+    bool m_heartbeat_scanning = false;
+    bool m_heartbeat_recheck = false;
+    std::chrono::steady_clock::time_point m_last_timer = std::chrono::steady_clock::now();
 };

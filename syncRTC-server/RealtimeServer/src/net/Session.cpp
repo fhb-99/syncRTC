@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <limits>
 #include <utility>
+#include <charconv>
+#include <json/json.h>
 
 #include <sys/socket.h>
 
@@ -95,6 +97,7 @@ bool Session::HandleRead()
             m_receive_buffer.append(read_buffer.data(), static_cast<std::size_t>(read_length));
             // 每次追加数据后立即尝试解帧，兼容半包和一次到达多个帧。
             ParseFrames();
+            if (IsClosed()) return false;
             continue;
         }
 
@@ -207,6 +210,63 @@ void Session::Close()
     m_send_offset = 0;
 }
 
+bool Session::ConnectionExpired(std::chrono::steady_clock::time_point now, bool allow_recheck)
+{
+    const bool expired = GetUserId() <= 0
+        ? now - m_created_at >= std::chrono::seconds(30)
+        : m_heartbeat_enabled && now - m_last_heartbeat >= std::chrono::seconds(20);
+    if (!expired) return false;
+    // I/O 长暂停后给一次有界复查机会；没有新的有效 PING 就不能反复延期。
+    if (allow_recheck && !m_recheck_used) {
+        m_recheck_used = true;
+        m_recheck_until = now + std::chrono::seconds(3);
+    }
+    return !m_recheck_used || now >= m_recheck_until;
+}
+
+void Session::HandleHeartbeat(const std::string& payload)
+{
+    // 小包和频率限制先于 JSON 解析；心跳不访问业务状态或存储。
+    if (GetUserId() <= 0 || payload.size() > 96) { RequestClose(); return; }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_heartbeat_window >= std::chrono::seconds(1)) {
+        m_heartbeat_window = now;
+        m_heartbeat_count = 0;
+    }
+    if (++m_heartbeat_count > 4) { RequestClose(); return; }
+    Json::Value value;
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = false;
+    builder["allowComments"] = false;
+    builder["failIfExtra"] = true;
+    builder["rejectDupKeys"] = true;
+    const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+    if (!reader->parse(payload.data(), payload.data() + payload.size(), &value, nullptr) ||
+        !value.isObject()) { RequestClose(); return; }
+    std::string reply = "{}";
+    if (value.empty() && !m_sequenced_heartbeat) {
+        // 兼容一期空对象协议；一旦采用序号模式，同一连接不再降级。
+    } else {
+        if (value.size() != 1 || !value["seq"].isString()) { RequestClose(); return; }
+        const auto sequence = value["seq"].asString();
+        std::uint64_t number = 0;
+        const auto parsed = std::from_chars(sequence.data(), sequence.data() + sequence.size(), number);
+        if (sequence.empty() || sequence.size() > 20 || sequence.front() == '0' ||
+            parsed.ec != std::errc{} || parsed.ptr != sequence.data() + sequence.size()) {
+            RequestClose();
+            return;
+        }
+        if (number <= m_heartbeat_sequence) return; // 重放不刷新期限，也不产生额外回包。
+        m_sequenced_heartbeat = true;
+        m_heartbeat_sequence = number;
+        reply = "{\"seq\":\"" + sequence + "\"}";
+    }
+    m_heartbeat_enabled = true;
+    m_last_heartbeat = now;
+    m_recheck_used = false;
+    if (!Send(ID_HEARTBEAT_RESPONSE, reply)) RequestClose();
+}
+
 void Session::ParseFrames()
 {
     while (m_receive_buffer.size() >= kFrameHeaderLength) {
@@ -225,6 +285,14 @@ void Session::ParseFrames()
             return;
         }
 
+        // 心跳在创建业务节点之前短路，保留统一帧边界和发送 FIFO。
+        if (request_id == ID_HEARTBEAT_REQUEST) {
+            const auto payload = m_receive_buffer.substr(kFrameHeaderLength, payload_length);
+            m_receive_buffer.erase(0, frame_length);
+            HandleHeartbeat(payload);
+            if (IsClosed()) return;
+            continue;
+        }
         auto message = std::make_shared<LogicNode>();
         message->session = shared_from_this();
         message->id = request_id;

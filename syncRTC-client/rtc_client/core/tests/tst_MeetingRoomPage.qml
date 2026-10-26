@@ -6,7 +6,10 @@ TestCase {
     id: testCase
 
     name: "MeetingRoomPage"
-    when: true
+    width: 1160
+    height: 760
+    visible: true
+    when: windowShown
 
     Component {
         id: roomComponent
@@ -64,7 +67,8 @@ TestCase {
     }
 
     function test_leaveButtonReturnsLocallyAfterMeetingEnds() {
-        var room = roomComponent.createObject(null, {
+        // 鼠标测试需要把页面挂到测试窗口，不能对无窗口的 Item 发点击。
+        var room = roomComponent.createObject(testCase, {
             "width": 1160,
             "height": 760,
             "status": "in_progress"
@@ -106,6 +110,18 @@ TestCase {
         verify(controls !== null)
         verify(controls.y >= content.y + content.height)
 
+        room.destroy()
+    }
+
+    function test_recoveryDisablesServerActionsButKeepsLeaveAvailable() {
+        var room = roomComponent.createObject(testCase, {
+            "width": 1160, "height": 760, "status": "in_progress",
+            "role": "host", "connectionReady": false
+        })
+        verify(!findChild(room, "meetingMicrophoneControl").enabled)
+        verify(!findChild(room, "meetingCameraControl").enabled)
+        verify(!findChild(room, "endMeetingButton").enabled)
+        verify(findChild(room, "meetingLeaveButton").enabled)
         room.destroy()
     }
 

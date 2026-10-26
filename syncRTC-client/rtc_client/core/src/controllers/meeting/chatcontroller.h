@@ -53,6 +53,7 @@ public:
     bool applyMessageReceived(const QJsonObject &json);
     bool applyGroupHistoryResponse(const QJsonObject &json);
     bool applyPrivateHistoryResponse(const QJsonObject &json);
+    void connectionInterrupted();
 
 signals:
     void messagesChanged();

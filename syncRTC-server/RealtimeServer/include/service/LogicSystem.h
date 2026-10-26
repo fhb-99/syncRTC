@@ -54,11 +54,21 @@ private:
     LogicSystem();
 
     using Operation = SerialCommandQueue::Operation;
+    struct Membership {
+        std::string ticket;
+        std::string auth_token;
+        std::string last_request;
+        std::uint64_t generation = 1;
+        std::weak_ptr<Session> session;
+        std::chrono::steady_clock::time_point deadline{};
+    };
     struct Room {
         explicit Room(BusinessScheduler& scheduler, std::uint64_t value)
             : id(value), queue(std::make_shared<SerialCommandQueue>(scheduler)) {}
         const std::uint64_t id;
         std::shared_ptr<SerialCommandQueue> queue;
+        // 票据只在当前 Realtime 进程有效；断线宽限期间也保留 Room。
+        std::unordered_map<int, Membership> members;
         std::vector<std::weak_ptr<Session>> sessions; // 只由本会议的串行操作访问。
     };
     using callback = std::function<void(Operation&, Room&, std::shared_ptr<Session>, std::uint16_t, std::string)>;
