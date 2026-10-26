@@ -72,6 +72,42 @@ bool RedisMgr::Get(const std::string &key, std::string &value)
     }
 }
 
+RedisMgr::LookupResult RedisMgr::Lookup(const std::string& key, std::string& value)
+{
+    if (!_con_pool) return LookupResult::Unavailable;
+    try {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return LookupResult::Unavailable;
+        const auto result = redis->get(key);
+        if (!result) return LookupResult::Missing;
+        value = *result;
+        return LookupResult::Found;
+    } catch (const std::exception&) {
+        // 不输出包含会话令牌的 Redis key。
+        return LookupResult::Unavailable;
+    }
+}
+
+bool RedisMgr::ActivateMember(std::uint64_t meeting, int uid)
+{
+    if (!_con_pool) return false;
+    try {
+        RedisConnGuard redis(_con_pool.get(), _con_pool->getConnection());
+        if (!redis) return false;
+        const auto room = "room:" + std::to_string(meeting);
+        const auto user = std::to_string(uid);
+        const std::string script =
+            "if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return 0 end "
+            "redis.call('HSET', KEYS[2], 'room_state', 'active', 'reconnect_deadline_at', '') "
+            "redis.call('ZREM', KEYS[3], ARGV[2]) return 1";
+        return redis->eval<long long>(script,
+            {room + ":members", room + ":member:" + user, "room:reconnect_deadlines"},
+            {user, std::to_string(meeting) + ":" + user}) == 1;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool RedisMgr::Set(const std::string &key, const std::string &value, int expire_seconds)
 {
     if (!_con_pool) return false;

@@ -22,6 +22,7 @@
 #include <json/reader.h>
 
 #include <sys/socket.h>
+#include <sys/random.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -40,6 +41,25 @@ constexpr std::uint16_t kReconnectTimeoutCheckEventId = 0xFFFD;
 constexpr std::uint16_t kMediaSignalResponseEventId = 0xFFFC;
 constexpr std::uint16_t kMediaConnectedEventId = 0xFFFB;
 constexpr std::uint16_t kMediaDisconnectedEventId = 0xFFFA;
+
+std::string NewResumeTicket()
+{
+    std::array<unsigned char, 32> bytes{};
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto count = ::getrandom(bytes.data() + offset, bytes.size() - offset, 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) throw std::runtime_error("生成恢复票据失败");
+        offset += static_cast<std::size_t>(count);
+    }
+    const char* hex = "0123456789abcdef";
+    std::string ticket;
+    for (const auto byte : bytes) {
+        ticket += hex[byte >> 4];
+        ticket += hex[byte & 15];
+    }
+    return ticket;
+}
 
 std::string HashMeetingPassword(const std::string& password)
 {
@@ -220,6 +240,10 @@ void LogicSystem::initHandlers()
         JoinMeeetingHandler(op, room, session, id, message);
     };
 
+    maps[ID_RESUME_MEETING_REQUEST] = [this](Operation& op, Room& room, std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
+        JoinMeeetingHandler(op, room, session, id, message);
+    };
+
     maps[ID_START_MEETING_REQUEST] = [this](Operation& op, Room& room, std::shared_ptr<Session> session, std::uint16_t id, std::string message) {
         StartMeetingHandler(op, room, session, id, message);
     };
@@ -360,9 +384,10 @@ void LogicSystem::LoginHandler(Operation& op, Room&, std::shared_ptr<Session> se
 
     // 从redis当中取出token
     std::string tmp;
-    bool is_id = op.Await(m_storage_pool, [&] { return RedisMgr::GetInstance()->Get("auth::session:" + token, tmp); });
-    if(!is_id) {
-        res["error"] = ErrorCodes::ERROR_REDIS;
+    const auto lookup = op.Await(m_storage_pool, [&] { return RedisMgr::GetInstance()->Lookup("auth::session:" + token, tmp); });
+    if (lookup != RedisMgr::LookupResult::Found) {
+        res["error"] = lookup == RedisMgr::LookupResult::Missing
+            ? ErrorCodes::ERROR_TOKEN : ErrorCodes::ERROR_REDIS;
         return;
     }
 
@@ -382,7 +407,7 @@ void LogicSystem::LoginHandler(Operation& op, Room&, std::shared_ptr<Session> se
 
     UserInfo user_info;
     bool is_user = op.Await(m_storage_pool, [&] { return MysqlMgr::GetInstance()->GetUserInfo(email, user_info); });
-    if(!is_user || user_info.uid <= 0 || user_info.username.empty()) {
+    if(!is_user || user_info.uid != user_id || user_info.username.empty()) {
         std::cout << "Get user info failed" << std::endl;
 		res["error"] = ErrorCodes::ERROR_MYSQL;
         return;
@@ -415,7 +440,12 @@ void LogicSystem::LoginHandler(Operation& op, Room&, std::shared_ptr<Session> se
     }
     res["meetings"] = std::move(meeting_list);
     // Redis 校验和用户资料查询均成功后，才将身份绑定到当前长连接。
+    if (session->IsClosed()) return;
+    session->SetAuthToken(token);
     session->SetUserId(user_id);
+    res["capabilities"].append("meeting_resume_v1");
+    res["capabilities"].append("heartbeat_v1");
+    res["capabilities"].append("heartbeat_v2");
     res["error"] = ErrorCodes::SUCCESS;
 }
 
@@ -566,28 +596,30 @@ void LogicSystem::GetPastMeetingHandler(Operation& op, Room&, std::shared_ptr<Se
 
 
 
-void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr<Session> session, std::uint16_t&, std::string& message)
+void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr<Session> session, std::uint16_t& id, std::string& message)
 {
     if (!session) {
         return;
     }
 
+    const bool resuming = id == ID_RESUME_MEETING_REQUEST;
     Json::Value value;
-    Defer defer([&value, session](){
+    Defer defer([&value, session, resuming](){
         if (std::uncaught_exceptions() > 0) value["error"] = ErrorCodes::ERROR_NETWORK;
-        session->Send(ID_JOIN_MEETING_RESPONSE, value.toStyledString());
+        if (!session->Send(resuming ? ID_RESUME_MEETING_RESPONSE : ID_JOIN_MEETING_RESPONSE,
+                           value.toStyledString())) session->RequestClose();
     });
 
     Json::Reader reader;
     Json::Value root;
     if (!reader.parse(message, root) || !root.isObject() ||
-        !root["meeting_code"].isString()) {
+        (!resuming && !root["meeting_code"].isString())) {
         value["error"] = ErrorCodes::ERROR_JSON;
         return;
     }
 
     const std::string meeting_code = root["meeting_code"].asString();
-    if(meeting_code.empty()) {
+    if(!resuming && meeting_code.empty()) {
         value["error"] = ErrorCodes::ERROR_JSON;
         return;
     }
@@ -599,8 +631,12 @@ void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr
     }
 
     MeetingInfo meeting_info;
-    if(!op.Await(m_storage_pool, [&] { return MysqlMgr::GetInstance()->GetMeetingInfoByCode(meeting_code, meeting_info); })) {
-        value["error"] = ErrorCodes::ERROR_MEETING_NOT_FOUND;
+    bool storage_error = false;
+    if(!op.Await(m_storage_pool, [&] {
+        return resuming ? MysqlMgr::GetInstance()->GetMeetingInfoById(room.id, meeting_info, &storage_error)
+                        : MysqlMgr::GetInstance()->GetMeetingInfoByCode(meeting_code, meeting_info);
+    })) {
+        value["error"] = storage_error ? ErrorCodes::ERROR_MYSQL : ErrorCodes::ERROR_MEETING_NOT_FOUND;
         return;
     }
 
@@ -616,7 +652,30 @@ void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr
         return;
     }
 
-    if (meeting_info.requires_password) {
+    std::uint64_t known_generation = 0;
+    if (resuming) {
+        const auto member = room.members.find(uid);
+        if (!root["request_id"].isString() || root["request_id"].asString().empty() ||
+            root["request_id"].asString().size() > 64 || !root["resume_ticket"].isString() ||
+            !ReadUInt64Value(root["membership_generation"], known_generation)) {
+            value["error"] = ErrorCodes::ERROR_JSON;
+            return;
+        }
+        value["request_id"] = root["request_id"];
+        // 只允许原已验证设备会话使用本成员的票据；设备 ID 本身不能授予接管权。
+        if (member == room.members.end() || member->second.ticket != root["resume_ticket"].asString() ||
+            member->second.auth_token.empty() || member->second.auth_token != session->GetAuthToken() ||
+            (member->second.deadline != std::chrono::steady_clock::time_point{} &&
+             member->second.deadline <= std::chrono::steady_clock::now()) ||
+            (known_generation != member->second.generation &&
+             !(known_generation < member->second.generation &&
+               member->second.last_request == root["request_id"].asString()))) {
+            value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+            return;
+        }
+    }
+
+    if (!resuming && meeting_info.requires_password) {
         if (!root["password"].isString()) {
             value["error"] = ErrorCodes::ERROR_PASSWORD;
             return;
@@ -641,15 +700,24 @@ void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr
 
 
     // Redis 保存当前正在房间里的成员；它不是历史记录，只服务实时通信。
-    const bool already_in_room = op.Await(m_storage_pool, [&] { return redis->SIsMember(room_key, uid_str); });
-    const int current_count = op.Await(m_storage_pool, [&] { return redis->SCard(room_key); });
+    std::vector<std::string> members;
+    if (!op.Await(m_storage_pool, [&] { return redis->SMembers(room_key, members); })) {
+        value["error"] = ErrorCodes::ERROR_REDIS;
+        return;
+    }
+    const bool already_in_room = std::find(members.begin(), members.end(), uid_str) != members.end();
+    const int current_count = static_cast<int>(members.size());
     if (!already_in_room && current_count >= meeting_info.max_participants) {
         value["error"] = ErrorCodes::ERROR_MEETING_FULL;
         return;
     }
 
-    bool is_reconnected = false;
-    if (already_in_room) {
+    if (resuming && !already_in_room) {
+        value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
+        return;
+    }
+    bool is_reconnected = resuming;
+    if (already_in_room && !resuming) {
         if (op.Await(m_storage_pool, [&] { return redis->HGet(member_state_key, "room_state"); }) != "reconnecting") {
             // 同一用户在会议中已有活跃连接，不允许第二台设备同时参会。
             value["error"] = ErrorCodes::ERROR_MEETING_ACCESS;
@@ -670,13 +738,15 @@ void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr
         is_reconnected = true;
     }
 
+    // 在任何入会写入前准备票据，避免随机源失败留下无凭据成员。
+    const std::string new_ticket = resuming ? room.members.at(uid).ticket : NewResumeTicket();
     if(!op.Await(m_storage_pool, [&] { return redis->SAdd(room_key, uid_str); })) {
         value["error"] = ErrorCodes::ERROR_REDIS;
         return;
     }
 
     // MySQL 保存“这个用户参加过这场会议”的事实，后续历史会议就靠它查询。
-    if (!op.Await(m_storage_pool, [&] { return MysqlMgr::GetInstance()->UpdateMeetingPart(meeting_info, uid); })) {
+    if (!resuming && !op.Await(m_storage_pool, [&] { return MysqlMgr::GetInstance()->UpdateMeetingPart(meeting_info, uid); })) {
         if (!already_in_room) {
             op.Await(m_storage_pool, [&] { return redis->SRem(room_key, uid_str); });
         }
@@ -699,19 +769,38 @@ void LogicSystem::JoinMeeetingHandler(Operation& op, Room& room, std::shared_ptr
         value["error"] = ErrorCodes::ERROR_REDIS;
         return;
     }
-    if (is_reconnected &&
-        (!op.Await(m_storage_pool, [&] { return redis->HSet(member_state_key, "room_state", "active"); }) ||
-         !op.Await(m_storage_pool, [&] { return redis->HSet(member_state_key, "reconnect_deadline_at", ""); }) ||
-         !op.Await(m_storage_pool, [&] { return redis->ZRem(ReconnectDeadlineKey(), deadline_member); }))) {
+    if (is_reconnected && !op.Await(m_storage_pool, [&] {
+            return redis->ActivateMember(meeting_info.meeting_id, uid);
+        })) {
         value["error"] = ErrorCodes::ERROR_REDIS;
         return;
     }
 
-    std::vector<std::string> members;
     if (!op.Await(m_storage_pool, [&] { return redis->SMembers(room_key, members); })) {
         value["error"] = ErrorCodes::ERROR_REDIS;
         return;
     }
+
+    // 先绑定会议归属；即使连接已关闭，排在本请求后的断线终结事件仍会按同一会议队列收尾。
+    auto& membership = room.members[uid];
+    const auto previous = membership.session.lock();
+    if (previous && previous != session) {
+        ReleaseMediaSession(previous);
+        previous->SetMeetingId(0);
+        previous->RequestClose();
+    }
+    if (!resuming) {
+        membership = Membership{};
+        membership.ticket = new_ticket;
+        membership.auth_token = session->GetAuthToken();
+    } else if (previous != session) {
+        ++membership.generation;
+    }
+    membership.session = session;
+    membership.deadline = {};
+    membership.last_request = resuming ? root["request_id"].asString() : "";
+    value["resume_ticket"] = membership.ticket;
+    value["membership_generation"] = std::to_string(membership.generation);
 
     // 入会成功后再绑定会议 ID，避免失败请求污染当前连接状态。
     session->SetMeetingId(meeting_info.meeting_id);
@@ -952,6 +1041,11 @@ void LogicSystem::SessionDisconnectedHandler(Operation& op, Room& room, std::sha
             return !active_session || active_session == session;
         }), meeting_sessions.end());
 
+    const auto member = room.members.find(uid);
+    if (member != room.members.end() && member->second.session.lock() == session) {
+        member->second.deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(kReconnectGraceSeconds);
+    }
     std::string notification_text;
     if (contains_disconnected_session && !has_other_connection && uid > 0) {
         const std::string uid_text = std::to_string(uid);
@@ -1046,6 +1140,10 @@ void LogicSystem::ExpireMemberHandler(Operation& op, Room& room, const std::stri
     try { uid = std::stoi(deadline_member.substr(deadline_member.find(':') + 1)); }
     catch (const std::exception&) {}
     if (uid <= 0) { op.Await(m_storage_pool, [&] { return redis->ZRem(ReconnectDeadlineKey(), deadline_member); }); return; }
+    // 本进程签发的票据用单调时间保底，墙钟校时不能提前耗尽 45 秒宽限期。
+    const auto local_member = room.members.find(uid);
+    if (local_member != room.members.end() &&
+        local_member->second.deadline > std::chrono::steady_clock::now()) return;
     const std::string member_state_key = RoomMemberStateKey(meeting_id, uid);
     const std::string deadline_text = op.Await(m_storage_pool, [&] { return redis->HGet(member_state_key, "reconnect_deadline_at"); });
     std::time_t deadline = 0;
@@ -1081,6 +1179,7 @@ void LogicSystem::ExpireMemberHandler(Operation& op, Room& room, const std::stri
     op.Await(m_storage_pool, [&] { return redis->HSet("presence:" + uid_text, "status", "online"); });
     op.Await(m_storage_pool, [&] { return redis->HSet("presence:" + uid_text, "meeting_id", ""); });
 
+    room.members.erase(uid);
     ReleaseUser(uid, meeting_id);
 
     Json::Value notification;
@@ -1210,6 +1309,7 @@ void LogicSystem::LeaveMeetingHandler(Operation& op, Room& room, std::shared_ptr
     ReleaseMediaSession(session);
 
     // 离开会议只清理实时状态，不改变会议生命周期或参会记录。
+    room.members.erase(uid);
     ReleaseUser(uid, meeting_id);
     session->SetMeetingId(0);
     value["error"] = ErrorCodes::SUCCESS;
@@ -1307,6 +1407,7 @@ void LogicSystem::EndMeetingHandler(Operation& op, Room& room, std::shared_ptr<S
         cleanup_ok = op.Await(m_storage_pool, [&] { return redis->Del(room_key); }) && cleanup_ok;
     }
     value["cleanup_sync"] = cleanup_ok;
+    room.members.clear();
     ReleaseRoomUsers(meeting_id);
 
     Json::Value notification;

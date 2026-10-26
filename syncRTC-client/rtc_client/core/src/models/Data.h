@@ -5,7 +5,7 @@
 #include <QJsonObject>
 
 struct ServerInfo {
-    int uid;
+    int uid = 0;
     QString email;
     QString host;
     QString port;

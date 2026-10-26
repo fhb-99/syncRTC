@@ -2,6 +2,7 @@
 
 #include "net/IoWakeup.h"
 #include <cstddef>
+#include <chrono>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -19,6 +20,7 @@ struct Frame
 
 class Session : public std::enable_shared_from_this<Session>
 {
+    friend struct HeartbeatTestAccess;
 public:
     explicit Session(int fd, std::shared_ptr<IoWakeup> wakeup = {}, std::uint64_t token = 0);
 
@@ -27,6 +29,11 @@ public:
     // TCP 登录校验成功后保存用户 ID，后续会议请求不再信任客户端传来的身份。
     void SetUserId(int user_id);
     int GetUserId() const;
+    // 只由该连接的串行业务操作访问，绑定 Gate 已验证的设备会话令牌。
+    void SetAuthToken(const std::string& token) { m_auth_token = token; }
+    const std::string& GetAuthToken() const { return m_auth_token; }
+    // 期限只由 I/O 线程读写；未鉴权使用独立期限，老客户端不启用已登录心跳超时。
+    bool ConnectionExpired(std::chrono::steady_clock::time_point now, bool allow_recheck = false);
 
     // 入会成功后记录当前会议，后续聊天/成员状态都从服务端会话状态推导。
     void SetMeetingId(std::uint64_t meeting_id);
@@ -51,6 +58,7 @@ public:
 
 private:
     void ParseFrames();
+    void HandleHeartbeat(const std::string& payload);
 
     // fd 的关闭由 CServer 统一负责，Session 只使用它进行收发。
     int m_fd;
@@ -58,6 +66,16 @@ private:
     const std::uint64_t m_token;
     // 未登录连接保持为 0。
     std::atomic<int> m_user_id;
+    std::string m_auth_token;
+    bool m_heartbeat_enabled = false;
+    bool m_sequenced_heartbeat = false;
+    std::uint64_t m_heartbeat_sequence = 0;
+    const std::chrono::steady_clock::time_point m_created_at = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point m_last_heartbeat;
+    std::chrono::steady_clock::time_point m_heartbeat_window;
+    unsigned m_heartbeat_count = 0;
+    bool m_recheck_used = false;
+    std::chrono::steady_clock::time_point m_recheck_until;
     // 未进入会议时保持为 0；离会/断线清理后也应重置为 0。
     std::atomic<std::uint64_t> m_meeting_id;
     // 最近一次媒体 offer 的内部关联标识，未协商时为 0。

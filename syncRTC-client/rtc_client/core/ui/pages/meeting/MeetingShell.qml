@@ -23,6 +23,7 @@ Item {
     property var activeMeetingMembers: []
     property var chatControllerRef: chatController
     property var mediaControllerRef: mediaController
+    readonly property var recovery: realtimeController.recoveryController
 
     function avatarText() {
         var name = username.trim()
@@ -117,6 +118,14 @@ Item {
         }
 
         // 入会被服务端拒绝时保留在首页，并显示服务端错误码供后续文案映射。
+        function onMeetingRestored(meetingId, status, role, members) {
+            if (String(meetingId) !== root.activeMeetingId) return
+            root.activeMeetingStatus = status
+            root.activeMeetingRole = role
+            root.activeMeetingMembers = members
+            root.showToast("会议状态已恢复；音视频请重新开启")
+        }
+
         function onJoinMeetingFailed(error) {
             root.showToast("加入会议失败（错误码：" + error + "）")
         }
@@ -186,6 +195,38 @@ Item {
             root.showToast(message)
         }
     }
+
+    Connections {
+        target: root.recovery
+        function onRecoveryFailed(reason) { root.showToast(reason) }
+    }
+
+    Rectangle {
+        z: 100
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width - 32, 620)
+        height: recoveryRow.implicitHeight + 20
+        radius: 8
+        color: "#fff3cd"
+        visible: root.recovery.statusText.length > 0
+        RowLayout {
+            id: recoveryRow
+            anchors.fill: parent
+            anchors.margins: 10
+            Label {
+                text: root.recovery.statusText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Button {
+                text: "重新登录"
+                visible: !root.recovery.recovering && !root.recovery.ready
+                onClicked: root.reloginRequested()
+            }
+        }
+    }
+    signal reloginRequested()
 
     function sectionIndex() {
         if (currentSection === "history")
@@ -422,6 +463,7 @@ Item {
                 currentIndex: root.sectionIndex()
 
                 MeetingHomePage {
+                    enabled: root.recovery.ready
                     // 最近会议由 C++ MeetingController 提供，模型重置会自动刷新 ListView。
                     meetings: meetingController
                     onJoinMeetingRequested: function(meetingId) {
@@ -512,6 +554,7 @@ Item {
     }
 
     MeetingRoomPage {
+        connectionReady: root.recovery.ready
         z: 10
         anchors.fill: parent
         visible: root.inMeeting

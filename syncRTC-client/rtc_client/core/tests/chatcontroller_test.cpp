@@ -28,6 +28,33 @@ private:
     }
 
 private slots:
+    void recoveryHistoryConfirmsPendingMessageAndKeepsServerOrder()
+    {
+        ChatController controller;
+        controller.setActiveMeetingId("100001");
+        auto old = messagePayload("old");
+        old["message_id"] = "10";
+        QVERIFY(controller.applyMessageReceived(old));
+        controller.sendGroupMessage("100001", "大家好");
+        const auto pendingId = controller.data(controller.index(1, 0), ChatController::ClientMsgIdRole).toString();
+        controller.connectionInterrupted();
+        QCOMPARE(controller.data(controller.index(1, 0), ChatController::DeliveryStateRole).toString(), QString("unknown"));
+        auto acknowledged = messagePayload(pendingId);
+        acknowledged["message_id"] = "12";
+        acknowledged["is_mine"] = true;
+        auto missed = messagePayload("missed");
+        missed["message_id"] = "11";
+        const QJsonObject history{{"error", 0}, {"meeting_id", "100001"},
+                                  {"messages", QJsonArray{missed, acknowledged}}};
+        QVERIFY(controller.applyGroupHistoryResponse(history));
+        QCOMPARE(controller.rowCount(), 3);
+        for (int row = 0; row < 3; ++row)
+            QCOMPARE(controller.data(controller.index(row, 0), ChatController::MessageIdRole).toString(), QString::number(10 + row));
+        QCOMPARE(controller.data(controller.index(2, 0), ChatController::DeliveryStateRole).toString(), QString("sent"));
+        QVERIFY(controller.applyGroupHistoryResponse(history));
+        QCOMPARE(controller.rowCount(), 3);
+    }
+
     void groupMessageSendsRequestAndAddsSendingMessage()
     {
         ChatController controller;

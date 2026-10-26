@@ -93,6 +93,10 @@ int main(int argc, char *argv[])
     ContactsController contactsController(&currentUser, &clientSession);
     MediaController mediaController;
     realtimeController.setMediaController(&mediaController);
+    QObject::connect(authController.GetLoginControll(), &LoginController::serverPrepared,
+                     realtimeController.recoveryController(), &RecoveryController::setServer);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit,
+                     realtimeController.recoveryController(), &RecoveryController::stop);
 
     engine.rootContext()->setContextProperty("currentUser", &currentUser);
     engine.rootContext()->setContextProperty("realtimeController", &realtimeController);

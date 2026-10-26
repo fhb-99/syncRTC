@@ -59,7 +59,7 @@ declare -A BINARY=(
 )
 declare -A TESTS=(
     [gate]='^(mysql_mgr_registration_test|logic_system_token_test)$'
-    [realtime]='^(session_test|logic_system_test|meeting_info_test|media_signal_client_test|business_scheduler_test|logic_dispatch_test|shutdown_signal_test|storage_pool_test)$'
+    [realtime]='^(session_test|logic_system_test|meeting_info_test|media_signal_client_test|business_scheduler_test|logic_dispatch_test|shutdown_signal_test|storage_pool_test|heartbeat_test)$'
     [media]='^(media_room_test|room_thread_pool_test|track_ready_test|session_send_test|local_signal_test|rtp_session_test)$'
 )
 

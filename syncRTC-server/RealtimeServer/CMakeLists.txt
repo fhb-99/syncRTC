@@ -128,6 +128,13 @@ add_custom_command(TARGET RealtimeServer POST_BUILD
 )
 
 if(BUILD_TESTING)
+    add_executable(heartbeat_test tests/HeartbeatTest.cpp src/net/CServer.cpp ${REALTIME_LOGIC_SOURCES})
+    target_compile_definitions(heartbeat_test PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(heartbeat_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(heartbeat_test PRIVATE ${REALTIME_LOGIC_LIBRARIES})
+    add_test(NAME heartbeat_test COMMAND heartbeat_test)
+    set_tests_properties(heartbeat_test PROPERTIES TIMEOUT 15)
+
     add_executable(storage_pool_test tests/StoragePoolTest.cpp)
     target_include_directories(storage_pool_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(storage_pool_test PRIVATE Threads::Threads MySQL::ConnectorCpp)

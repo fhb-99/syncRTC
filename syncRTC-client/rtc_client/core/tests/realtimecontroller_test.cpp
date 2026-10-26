@@ -53,7 +53,7 @@ private slots:
     {
         CurrentUserState currentUser;
         RealtimeController realtimeController(&currentUser);
-        QSignalSpy sendSpy(TcpMgr::GetInstance(), &TcpMgr::signal_send_data);
+        QSignalSpy sendSpy(TcpMgr::GetInstance().get(), &TcpMgr::signal_send_data);
         QSignalSpy answerSpy(&realtimeController, &RealtimeController::aiAnswerReceived);
         QSignalSpy finishedSpy(&realtimeController, &RealtimeController::aiRequestFinished);
 

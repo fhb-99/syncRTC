@@ -13,10 +13,12 @@
 #include "profilecontroller.h"
 #include "meetingcontroller.h"
 #include "chatcontroller.h"
+#include "recoverycontroller.h"
 
 class RealtimeController : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(RecoveryController *recoveryController READ recoveryController CONSTANT)
 public:
     explicit RealtimeController(CurrentUserState *currentUser, QObject *parent = nullptr);
 
@@ -24,6 +26,7 @@ public:
     MeetingController *meetingController() const { return m_meeting.get(); }
     ChatController *chatController() const { return m_chat.get(); }
     void setMediaController(QObject *mediaController);
+    RecoveryController *recoveryController() const { return m_recovery.get(); }
 
     // 会议内 AI 只提供普通文本问答，不携带音频或会议上下文。
     Q_INVOKABLE void askAiQuestion(const QString &question);
@@ -49,6 +52,7 @@ private:
     std::unique_ptr<ProfileController> m_profile;
     std::unique_ptr<MeetingController> m_meeting;
     std::unique_ptr<ChatController> m_chat;
+    std::unique_ptr<RecoveryController> m_recovery;
     QObject *m_media = nullptr;
     // 后续联系人、会议、AI 等控制器只需在此注册各自 RequestID 的处理器。
     QMap<RequestID, MessageHandler> m_handlers;

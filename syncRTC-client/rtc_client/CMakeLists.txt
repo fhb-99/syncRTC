@@ -106,6 +106,7 @@ qt_add_qml_module(apprtc_client
         RESOURCES config/config.ini
         SOURCES core/src/models/Data.h
         SOURCES core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
+        SOURCES core/src/controllers/meeting/recoverycontroller.h core/src/controllers/meeting/recoverycontroller.cpp
         SOURCES core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
         SOURCES core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
         SOURCES core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
@@ -275,6 +276,8 @@ if(BUILD_TESTING)
         core/src/controllers/meeting/meetingcontroller.cpp
         core/src/controllers/meeting/chatcontroller.h
         core/src/controllers/meeting/chatcontroller.cpp
+        core/src/controllers/meeting/recoverycontroller.h
+        core/src/controllers/meeting/recoverycontroller.cpp
         core/src/controllers/meeting/realtimecontroller.h
         core/src/controllers/meeting/realtimecontroller.cpp
     )
@@ -287,6 +290,27 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME realtimecontroller_test COMMAND realtimecontroller_test)
+
+    qt_add_executable(recoverycontroller_test
+        core/tests/recoverycontroller_test.cpp
+        core/src/controllers/auth/LoginController.h core/src/controllers/auth/LoginController.cpp
+        core/src/controllers/meeting/realtimecontroller.h core/src/controllers/meeting/realtimecontroller.cpp
+        core/src/controllers/meeting/recoverycontroller.h core/src/controllers/meeting/recoverycontroller.cpp
+        core/src/controllers/meeting/meetingcontroller.h core/src/controllers/meeting/meetingcontroller.cpp
+        core/src/controllers/meeting/chatcontroller.h core/src/controllers/meeting/chatcontroller.cpp
+        core/src/controllers/meeting/profilecontroller.h core/src/controllers/meeting/profilecontroller.cpp
+        core/src/models/currentuserstate.h core/src/models/currentuserstate.cpp
+        core/src/models/clientsession.h core/src/models/clientsession.cpp
+        core/src/models/sessioncredentialstore.h core/src/models/sessioncredentialstore.cpp
+        core/src/network/httpmgr.h core/src/network/httpmgr.cpp
+        core/src/network/tcpmgr.h core/src/network/tcpmgr.cpp
+    )
+    target_link_libraries(recoverycontroller_test PRIVATE Qt6::Test Qt6::Gui Qt6::Network)
+    if(WIN32)
+        target_link_libraries(recoverycontroller_test PRIVATE Advapi32)
+    endif()
+    add_test(NAME recoverycontroller_test COMMAND recoverycontroller_test)
+    set_tests_properties(recoverycontroller_test PROPERTIES TIMEOUT 60)
 
     qt_add_executable(meetingcontroller_test
         core/tests/meetingcontroller_test.cpp
