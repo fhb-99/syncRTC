@@ -76,8 +76,18 @@ public:
     // 收到重连成功通知后，把成员恢复为正常会议状态。
     bool applyMeetingMemberReconnected(const QJsonObject &json);
     QVariantList currentMeetingMembers() const;
+    QString currentMeetingId() const { return m_currentMeetingId; }
+    QString resumeTicket() const { return m_resumeTicket; }
+    QString membershipGeneration() const { return m_membershipGeneration; }
+    bool applyResumeMeetingResponse(const QJsonObject &json);
+    void setConnectionRecovering(bool recovering) { m_connectionRecovering = recovering; }
+    void connectionInterrupted();
+    void abandonCurrentMeeting();
 
 signals:
+    void recoveryCancelled();
+    void meetingRestored(const QString &meetingId, const QString &status,
+                         const QString &role, const QVariantList &members);
     void recentMeetingsChanged();
     void historyMeetingsChanged();
     // 服务端确认入会成功后发出，QML 根据状态和角色渲染会议界面。
@@ -118,6 +128,10 @@ private:
     QString m_pendingStartMeetingId;
     QString m_pendingLeaveMeetingId;
     QString m_pendingEndMeetingId;
+    bool m_connectionRecovering = false;
+    QString m_resumeTicket;
+    QString m_membershipGeneration;
+    QString m_currentMeetingCode;
     QString m_currentMeetingId;
     QVariantList m_currentMeetingMembers;
 };

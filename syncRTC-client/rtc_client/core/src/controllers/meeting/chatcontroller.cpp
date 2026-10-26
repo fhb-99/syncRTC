@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QTime>
 #include <QUuid>
+#include <algorithm>
 
 #include "../../models/global.h"
 #include "../../network/tcpmgr.h"
@@ -435,32 +436,39 @@ int ChatController::mergeHistoryMessages(const QVector<ChatMessage> &messages)
         return 0;
     }
 
-    QVector<ChatMessage> missingMessages;
+    beginResetModel();
+    int added = 0;
     for (const ChatMessage &message : messages) {
-        if (findMessage(message.clientMsgId) < 0 &&
-            findMessageByServerId(message.messageId) < 0) {
-            missingMessages.append(message);
+        int row = findMessage(message.clientMsgId);
+        if (row < 0) row = findMessageByServerId(message.messageId);
+        if (row >= 0) {
+            // 回包丢失的本地消息由权威历史确认，不能永远停留在发送中。
+            m_messages[row] = message;
+        } else {
+            m_messages.append(message);
+            ++added;
         }
     }
-
-    if (missingMessages.isEmpty()) {
-        return 0;
-    }
-
-    // 历史消息按时间正序放在已有实时消息之前，避免打开群聊后出现倒序跳动。
-    beginResetModel();
-    QVector<ChatMessage> merged;
-    merged.reserve(missingMessages.size() + m_messages.size());
-    for (const ChatMessage &message : missingMessages) {
-        merged.append(message);
-    }
-    for (const ChatMessage &message : m_messages) {
-        merged.append(message);
-    }
-    m_messages = std::move(merged);
+    // 既支持向前分页，也支持重连后补最新一页；未确认消息保留在末尾。
+    std::stable_sort(m_messages.begin(), m_messages.end(), [](const auto &left, const auto &right) {
+        const auto a = left.messageId.toULongLong();
+        const auto b = right.messageId.toULongLong();
+        if (!a || !b) return a && !b;
+        return a < b;
+    });
     endResetModel();
     emit messagesChanged();
-    return missingMessages.size();
+    return added;
+}
+
+void ChatController::connectionInterrupted()
+{
+    for (int row = 0; row < m_messages.size(); ++row) {
+        if (m_messages[row].deliveryState != QStringLiteral("sending")) continue;
+        m_messages[row].deliveryState = QStringLiteral("unknown");
+        emit dataChanged(index(row, 0), index(row, 0), {DeliveryStateRole});
+    }
+    emit messagesChanged();
 }
 
 void ChatController::updateMessage(int row, const ChatMessage &message)

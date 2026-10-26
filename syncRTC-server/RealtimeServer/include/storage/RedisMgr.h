@@ -133,6 +133,11 @@ public:
 
     // 基础 KV 操作
     bool Get(const std::string& key, std::string& value);
+    // 区分令牌不存在与依赖故障，不能把网络故障当成退出登录。
+    enum class LookupResult { Found, Missing, Unavailable };
+    LookupResult Lookup(const std::string& key, std::string& value);
+    // 恢复已有成员时原子清除重连标记，不创建不存在的成员。
+    bool ActivateMember(std::uint64_t meeting, int uid);
     bool Set(const std::string& key, const std::string& value, int expire_seconds = 0); // 可选过期时间
 
     // 认证（单独调用，也可在 Connect 里自动调用）

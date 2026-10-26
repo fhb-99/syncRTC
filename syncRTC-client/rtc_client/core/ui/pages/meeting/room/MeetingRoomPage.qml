@@ -6,6 +6,7 @@ import QtMultimedia
 Item {
     id: root
 
+    property bool connectionReady: true
     property string meetingId: ""
     property string meetingCode: ""
     property string status: "scheduled"
@@ -88,21 +89,21 @@ Item {
     }
 
     function requestStartMeeting() {
-        if (!isHost || !isScheduled)
+        if (!connectionReady || !isHost || !isScheduled)
             return
 
         root.startMeetingRequested(root.meetingId)
     }
 
     function requestEndMeeting() {
-        if (!isHost || !isInProgress)
+        if (!connectionReady || !isHost || !isInProgress)
             return
 
         root.endMeetingRequested(root.meetingId)
     }
 
     function setMicrophoneEnabled(enabled) {
-        if (root.microphoneEnabled === enabled)
+        if (!connectionReady || root.microphoneEnabled === enabled)
             return
 
         // QML 只发出用户意图，真实设备开关由 MediaController 接收信号后处理。
@@ -113,7 +114,7 @@ Item {
     }
 
     function setCameraEnabled(enabled) {
-        if (root.cameraEnabled === enabled)
+        if (!connectionReady || root.cameraEnabled === enabled)
             return
 
         if (enabled)
@@ -250,7 +251,7 @@ Item {
     // 根据当前聊天范围发送群聊或私聊，消息状态由服务端 ack 和推送驱动。
     function sendChatMessage() {
         var content = chatInput.text.trim()
-        if (content.length === 0 || !root.chatController)
+        if (!connectionReady || content.length === 0 || !root.chatController)
             return
 
         if (chatScope === "private")
@@ -1432,7 +1433,8 @@ Item {
                                 // 本地消息先显示发送中，服务端拒绝后明确提示失败。
                                 Text {
                                     visible: isMine && deliveryState !== "sent"
-                                    text: deliveryState === "failed" ? "发送失败" : "发送中"
+                                    text: deliveryState === "failed" ? "发送失败"
+                                          : deliveryState === "unknown" ? "发送结果待确认" : "发送中"
                                     color: deliveryState === "failed" ? "#dc2626" : "#98a2b3"
                                     font.pixelSize: 11
                                 }
@@ -1479,7 +1481,7 @@ Item {
                                          ? "向会议群聊发送消息"
                                          : "向 " + root.privateRecipient + " 发送私聊"
                         selectByMouse: true
-                        enabled: root.chatController && !root.isEnded &&
+                        enabled: root.connectionReady && root.chatController && !root.isEnded &&
                                  (root.chatScope === "group" || root.privateRecipientId.length > 0)
                         Keys.onReturnPressed: root.sendChatMessage()
 
@@ -1494,7 +1496,7 @@ Item {
                         Layout.preferredWidth: 58
                         Layout.preferredHeight: 42
                         text: "发送"
-                        enabled: root.chatController && !root.isEnded &&
+                        enabled: root.connectionReady && root.chatController && !root.isEnded &&
                                  (root.chatScope === "group" || root.privateRecipientId.length > 0) &&
                                  chatInput.text.trim().length > 0
                         onClicked: root.sendChatMessage()
@@ -1598,6 +1600,7 @@ Item {
 
         ControlButton {
             objectName: "meetingMicrophoneControl"
+            enabled: root.connectionReady
             visible: root.isInProgress
             label: root.microphoneEnabled ? "静音" : "开麦克风"
             iconText: root.microphoneEnabled ? "●" : "◌"
@@ -1607,6 +1610,7 @@ Item {
 
         ControlButton {
             objectName: "meetingCameraControl"
+            enabled: root.connectionReady
             visible: root.isInProgress
             label: root.cameraEnabled ? "关视频" : "开视频"
             iconText: root.cameraEnabled ? "▣" : "□"
@@ -1648,6 +1652,7 @@ Item {
 
         LifecycleButton {
             objectName: "startMeetingButton"
+            enabled: root.connectionReady
             visible: root.isHost && root.isScheduled
             label: "开始会议"
             iconText: "▶"
@@ -1658,6 +1663,7 @@ Item {
 
         LifecycleButton {
             objectName: "endMeetingButton"
+            enabled: root.connectionReady
             visible: root.isHost && root.isInProgress
             label: "结束会议"
             iconText: "■"

@@ -130,6 +130,7 @@ void MediaController::unbindRemoteVideoSink(int publisherUid, QObject *sinkObjec
 
 bool MediaController::applyMediaAnswer(const QJsonObject &json)
 {
+    if (m_mediaStopped) return false;
     // answer 是对端返回的 SDP，会告诉本地 PeerConnection 最终采用的媒体参数。
     const QString sdp = json.value("sdp").toString();
     const QString type = json.value("type").toString(QStringLiteral("answer"));
@@ -147,6 +148,7 @@ bool MediaController::applyMediaAnswer(const QJsonObject &json)
 
 bool MediaController::applyMediaOffer(const QJsonObject &json)
 {
+    if (m_mediaStopped) return false;
     const QString sdp = json.value("sdp").toString();
     const QString type = json.value("type").toString();
     if (sdp.isEmpty() || type != QStringLiteral("offer")) {
@@ -164,6 +166,7 @@ bool MediaController::applyMediaOffer(const QJsonObject &json)
 
 bool MediaController::applyMediaCandidate(const QJsonObject &json)
 {
+    if (m_mediaStopped) return false;
     // candidate 是 ICE 候选地址，用来告诉 PeerConnection 可以尝试哪条网络路径。
     const QString candidate = json.value("candidate").toString();
     const QString mid = json.value("mid").toString();
@@ -181,6 +184,7 @@ bool MediaController::applyMediaCandidate(const QJsonObject &json)
 
 void MediaController::slotLocalOfferReady(const QString &meetingId, const QString &sdp)
 {
+    if (m_mediaStopped) return;
     qInfo().noquote() << "[local-offer-send]"
                       << "meeting=" << meetingId
                       << "sdp_bytes=" << sdp.toUtf8().size()
@@ -203,6 +207,7 @@ void MediaController::slotLocalOfferReady(const QString &meetingId, const QStrin
 
 void MediaController::slotLocalAnswerReady(const QString &meetingId, const QString &sdp)
 {
+    if (m_mediaStopped) return;
     QJsonObject request;
     request["meeting_id"] = meetingId;
     request["type"] = QStringLiteral("answer");
@@ -218,6 +223,7 @@ void MediaController::slotLocalCandidateReady(const QString &meetingId,
                                               const QString &candidate,
                                               const QString &mid)
 {
+    if (m_mediaStopped) return;
     QJsonObject request;
     request["meeting_id"] = meetingId;
     request["candidate"] = candidate;
@@ -246,6 +252,7 @@ void MediaController::slotRemoteVideoEncodedFrameReady(int publisherUid,
                                                        const QByteArray &frame,
                                                        quint32 rtpTimestamp)
 {
+    if (m_mediaStopped) return;
     // MediaSession 的 onFrame 回调来自 libdatachannel 收包线程。
     // 该信号通过 Qt 自动队列连接回到 MediaController 所在线程，再按发布者找到接收链路。
     receiverFor(publisherUid)->receiveVideoFrame(frame, rtpTimestamp);
@@ -255,6 +262,7 @@ void MediaController::slotRemoteAudioEncodedFrameReady(int publisherUid,
                                                         const QByteArray &frame,
                                                         quint32 rtpTimestamp)
 {
+    if (m_mediaStopped) return;
     // 同一个发布者的音频和视频进入同一个 RemoteMediaReceiver，解码后再汇入其中的
     // AvSyncScheduler。这样每位成员都只使用自己的音频时钟调度自己的视频画面。
     receiverFor(publisherUid)->receiveAudioFrame(frame, rtpTimestamp);
@@ -291,6 +299,7 @@ void MediaController::requestOpenCamera(const QString &meetingId)
 
     // 创建媒体会话并打开视频发送资格。阻塞等待仅覆盖一次会话初始化，不让首帧落到未创建
     // Track 的旧发送链路；SDP/ICE 仍然由信号异步交给主线程和 TcpMgr。
+    m_mediaStopped = false;
     RtcTransportWorker *transportWorker = m_rtcTransportWorker;
     QMetaObject::invokeMethod(transportWorker, [transportWorker, meetingId]() {
         transportWorker->startMediaSession(meetingId);
@@ -367,6 +376,7 @@ void MediaController::requestCloseMicrophone()
 
 void MediaController::requestStopAll()
 {
+    m_mediaStopped = true;
     // 两个编码线程停止确认后才释放 PeerConnection，避免它们继续向已关闭的传输线程提交 RTP。
     QMetaObject::invokeMethod(m_videoEncodeWorker, &VideoEncodeWorker::stop,
                               Qt::BlockingQueuedConnection);

@@ -645,14 +645,18 @@ bool MysqlMgr::GetUserDisplayNameById(int user_id, std::string& display_name)
     }
 }
 
-bool MysqlMgr::GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting)
+bool MysqlMgr::GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting, bool* storage_error)
 {
+    // 查无会议与存储不可用分开，恢复流程不能因临时故障丢弃成员票据。
+    if (storage_error) *storage_error = false;
     if (!pool_ || meeting_id == 0) {
+        if (storage_error) *storage_error = !pool_;
         return false;
     }
 
     auto con = pool_->getConnection();
     if (!con || !con->_con) {
+        if (storage_error) *storage_error = true;
         return false;
     }
 
@@ -685,6 +689,7 @@ bool MysqlMgr::GetMeetingInfoById(std::uint64_t meeting_id, MeetingInfo& meeting
         return true;
     }
     catch(const sql::SQLException& e) {
+        if (storage_error) *storage_error = true;
         std::cerr << "SQLException: " << e.what();
         std::cerr << " (MySQL error code: " << e.getErrorCode();
         std::cerr << ", SQLState: " << e.getSQLState() << " )" << std::endl;

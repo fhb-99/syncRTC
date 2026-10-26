@@ -61,6 +61,11 @@ enum RequestID
     // 会议内普通 AI 问答：问题和答案通过 RealtimeServer 转发。
     ID_AI_ASK_REQUEST = 1044,
     ID_AI_ASK_RESPONSE = 1045,
+    // 进程存活期间的业务恢复；媒体重建使用独立流程。
+    ID_RESUME_MEETING_REQUEST = 1046,
+    ID_RESUME_MEETING_RESPONSE = 1047,
+    ID_HEARTBEAT_REQUEST = 1048,
+    ID_HEARTBEAT_RESPONSE = 1049,
 };
 
 

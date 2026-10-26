@@ -111,6 +111,11 @@ void MeetingController::requestStartMeeting(const QString &meetingId)
 
 void MeetingController::requestLeaveMeeting(const QString &meetingId)
 {
+    if (m_connectionRecovering && meetingId == m_currentMeetingId) {
+        abandonCurrentMeeting();
+        emit recoveryCancelled();
+        return;
+    }
     const QString id = meetingId.trimmed();
     if (id.isEmpty()) {
         emit leaveMeetingFailed(ErrorCodes::ERROR_JSON);
@@ -340,11 +345,64 @@ bool MeetingController::applyJoinMeetingResponse(const QJsonObject &json)
 
     m_pendingJoinMeetingCode.clear();
     m_currentMeetingId = meetingId;
+    m_currentMeetingCode = meetingCode;
+    m_resumeTicket = json.value("resume_ticket").toString();
+    m_membershipGeneration = json.value("membership_generation").toString();
     m_currentMeetingMembers = membersValue.toArray().toVariantList();
     emit meetingMembersChanged(m_currentMeetingId, m_currentMeetingMembers);
     emit joinMeetingSucceeded(meetingCode, meetingId, status, role,
                               m_currentMeetingMembers);
     return true;
+}
+
+bool MeetingController::applyResumeMeetingResponse(const QJsonObject &json)
+{
+    const QString status = json.value("status").toString();
+    const QString role = json.value("role").toString();
+    bool validGeneration = false;
+    const auto generation = json.value("membership_generation").toString().toULongLong(&validGeneration);
+    if (m_currentMeetingId.isEmpty() || json.value("meeting_id").toString() != m_currentMeetingId ||
+        json.value("meeting_code").toString() != m_currentMeetingCode ||
+        json.value("resume_ticket").toString() != m_resumeTicket || m_resumeTicket.isEmpty() ||
+        !validGeneration || generation < m_membershipGeneration.toULongLong() ||
+        (status != "scheduled" && status != "in_progress") ||
+        (role != "host" && role != "participant") || !json.value("members").isArray()) return false;
+
+    const auto members = json.value("members").toArray();
+    for (const auto &member : members) {
+        if (!member.isObject() || member.toObject().value("user_id").toVariant().toString().isEmpty())
+            return false;
+    }
+    // 完整快照验证后一次替换，恢复信号只更新当前页，不模拟普通入会。
+    m_membershipGeneration = QString::number(generation);
+    m_currentMeetingMembers = members.toVariantList();
+    emit meetingMembersChanged(m_currentMeetingId, m_currentMeetingMembers);
+    emit meetingRestored(m_currentMeetingId, status, role, m_currentMeetingMembers);
+    return true;
+}
+
+void MeetingController::connectionInterrupted()
+{
+    m_pendingJoinMeetingCode.clear();
+    m_pendingStartMeetingId.clear();
+    m_pendingEndMeetingId.clear();
+    // 已点击离会的意图优先，不能因回包丢失而再次恢复该会议。
+    if (!m_pendingLeaveMeetingId.isEmpty()) abandonCurrentMeeting();
+}
+
+void MeetingController::abandonCurrentMeeting()
+{
+    const QString id = m_currentMeetingId;
+    m_currentMeetingId.clear();
+    m_currentMeetingCode.clear();
+    m_currentMeetingMembers.clear();
+    m_resumeTicket.clear();
+    m_membershipGeneration.clear();
+    m_pendingJoinMeetingCode.clear();
+    m_pendingStartMeetingId.clear();
+    m_pendingLeaveMeetingId.clear();
+    m_pendingEndMeetingId.clear();
+    if (!id.isEmpty()) emit leaveMeetingSucceeded(id);
 }
 
 bool MeetingController::applyStartMeetingResponse(const QJsonObject &json)
@@ -401,6 +459,9 @@ bool MeetingController::applyLeaveMeetingResponse(const QJsonObject &json)
     m_pendingLeaveMeetingId.clear();
     if (m_currentMeetingId == meetingId) {
         m_currentMeetingId.clear();
+        m_currentMeetingCode.clear();
+        m_resumeTicket.clear();
+        m_membershipGeneration.clear();
         m_currentMeetingMembers.clear();
     }
     emit leaveMeetingSucceeded(meetingId);
@@ -549,6 +610,10 @@ bool MeetingController::applyEndMeetingResponse(const QJsonObject &json)
     }
 
     m_pendingEndMeetingId.clear();
+    if (meetingId == m_currentMeetingId) {
+        m_resumeTicket.clear();
+        m_membershipGeneration.clear();
+    }
     emit endMeetingSucceeded(meetingId);
     return true;
 }
@@ -561,6 +626,10 @@ bool MeetingController::applyMeetingEnded(const QJsonObject &json)
         return false;
     }
 
+    if (meetingId == m_currentMeetingId) {
+        m_resumeTicket.clear();
+        m_membershipGeneration.clear();
+    }
     emit meetingEnded(meetingId);
     return true;
 }

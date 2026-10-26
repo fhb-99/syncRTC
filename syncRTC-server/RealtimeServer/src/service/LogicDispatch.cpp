@@ -17,6 +17,7 @@ std::uint16_t ResponseId(std::uint16_t request)
     case ID_CREATE_MEETING_REQUEST: return ID_CREATE_MEETING_RESPONSE;
     case ID_PAST_MEETING_REQUEST: return ID_PAST_MEETING_RESPONSE;
     case ID_JOIN_MEETING_REQUEST: return ID_JOIN_MEETING_RESPONSE;
+    case ID_RESUME_MEETING_REQUEST: return ID_RESUME_MEETING_RESPONSE;
     case ID_START_MEETING_REQUEST: return ID_START_MEETING_RESPONSE;
     case ID_LEAVE_MEETING_REQUEST: return ID_LEAVE_MEETING_RESPONSE;
     case ID_END_MEETING_REQUEST: return ID_END_MEETING_RESPONSE;
@@ -82,7 +83,7 @@ bool LogicSystem::SubmitRoom(std::uint64_t id, std::function<void(Operation&, Ro
         const std::weak_ptr<Room> weak = room;
         room->queue->on_idle = [this, id, weak] {
             const auto context = weak.lock();
-            if (!context || !context->sessions.empty()) return;
+            if (!context || !context->sessions.empty() || !context->members.empty()) return;
             std::lock_guard<std::mutex> guard(m_registry_mutex);
             const auto it = m_rooms.find(id);
             if (it != m_rooms.end() && it->second == context && context->queue->Pending() == 0)
@@ -156,6 +157,15 @@ void LogicSystem::Dispatch(Operation& op, Room& room, const std::shared_ptr<Logi
     if (handler == maps.end()) return;
     const auto session = message->session;
     if (session && message->id != kDisconnected && session->IsClosed()) return;
+    // 旧连接即使已排队，也不能在接管后对新成员执行离会、聊天或媒体操作。
+    if (session && room.id && message->id != ID_JOIN_MEETING_REQUEST &&
+        message->id != ID_RESUME_MEETING_REQUEST && message->id != kDisconnected) {
+        const auto member = room.members.find(session->GetUserId());
+        if (member != room.members.end() && member->second.session.lock() != session) {
+            ReplyError(message, ErrorCodes::ERROR_MEETING_ACCESS);
+            return;
+        }
+    }
     // 在首个状态变化前预留整条操作的慢任务容量，防止多步写入做到一半因池满退出。
     try {
         if (message->id != ID_AI_ASK_REQUEST && message->id != kMediaMessage)
@@ -174,7 +184,7 @@ void LogicSystem::Dispatch(Operation& op, Room& room, const std::shared_ptr<Logi
         }
     }
     try {
-    if (message->id == ID_JOIN_MEETING_REQUEST) {
+    if (message->id == ID_JOIN_MEETING_REQUEST || message->id == ID_RESUME_MEETING_REQUEST) {
         const auto uid = session->GetUserId();
         if (!ReserveUser(uid, room.id)) { ReplyError(message, ErrorCodes::ERROR_MEETING_ACCESS); return; }
         Defer release([this, uid, &room, session] { FinishJoin(uid, room.id, session->GetMeetingId() == room.id); });

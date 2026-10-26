@@ -9,12 +9,30 @@ RealtimeController::RealtimeController(CurrentUserState *currentUser, QObject *p
       m_currentUser(currentUser),
       m_profile(std::make_unique<ProfileController>(currentUser)),
       m_meeting(std::make_unique<MeetingController>()),
-      m_chat(std::make_unique<ChatController>())
+      m_chat(std::make_unique<ChatController>()),
+      m_recovery(std::make_unique<RecoveryController>(m_meeting.get()))
 {
     Q_ASSERT(m_currentUser);
 
     connect(TcpMgr::GetInstance().get(), &TcpMgr::signal_message_recv,
             this, &RealtimeController::slot_message_recv);
+    connect(m_recovery.get(), &RecoveryController::interrupted, this, [this] {
+        if (m_media) QMetaObject::invokeMethod(m_media, "requestStopAll");
+        m_chat->connectionInterrupted();
+        emit aiRequestFinished();
+    });
+    connect(TcpMgr::GetInstance().get(), &TcpMgr::signal_send_rejected, this,
+            [this](RequestID id, const QByteArray &data) {
+        if (id == ID_SEND_MEETING_MESSAGE_REQUEST) {
+            const auto request = QJsonDocument::fromJson(data).object();
+            m_chat->applySendMessageAck({{"error", ErrorCodes::ERROR_NETWORK},
+                                       {"client_msg_id", request.value("client_msg_id")}});
+        }
+    });
+    connect(m_recovery.get(), &RecoveryController::meetingRecovered, this, [this](const QString &id) {
+        // 先补最近一页群聊；更早历史沿用现有分页入口，不重放未确认的发送。
+        m_chat->requestGroupHistory(id);
+    });
     initHandlers();
 }
 
@@ -69,6 +87,7 @@ void RealtimeController::initHandlers()
         }
 
         // 两类初始化数据均写入状态后，再通知 QML 进入主界面
+        m_recovery->authenticated(json);
         emit profileReady();
     });
 
@@ -257,6 +276,7 @@ void RealtimeController::initHandlers()
 
 void RealtimeController::slot_message_recv(RequestID reqID, QJsonObject json)
 {
+    if (m_recovery->handleMessage(reqID, json)) return;
     const auto handler = m_handlers.constFind(reqID);
     if (handler == m_handlers.cend()) {
         qDebug() << "Unhandled realtime message id:" << reqID;
